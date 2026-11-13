@@ -15,7 +15,10 @@ alerts that are firing on your MaxNines server and links to its web interface.
 It needs macOS 14 or later and Swift 6.
 
 ```sh
-swift build -c release
-scripts/bundle.sh        # makes build/MaxNines.app
+scripts/bundle.sh        # builds it and makes build/MaxNines.app
 open build/MaxNines.app
+scripts/test.sh          # runs the tests
 ```
+
+A server reached over plain `http` has to be on your local network, as macOS won't let
+the app send the key unencrypted any further.
