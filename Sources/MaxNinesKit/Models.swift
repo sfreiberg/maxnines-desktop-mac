@@ -58,7 +58,18 @@ public struct MonitoredHost: Decodable, Identifiable, Equatable, Sendable {
     public let publicKey: String
     public let state: String
     public let online: Bool
+    /// `agent`, `agentless` or `built_in`. A server from before hosts could go
+    /// without an agent doesn't say.
+    public let kind: String?
+    /// How it is, such as `online`, `offline` or `not_read`.
+    public let health: String?
 
-    /// The server lists its own built-in hosts too, which have no agent and no key.
-    public var isAgent: Bool { !publicKey.isEmpty && state == "approved" }
+    /// Whether it's a host that could be online: approved, not one of the server's
+    /// own built-in hosts, and not one with no agent that nothing is read for,
+    /// which is neither online nor offline.
+    public var isCounted: Bool {
+        guard state == "approved", health != "not_read" else { return false }
+        // Without a kind, only a built-in host has no key.
+        return kind.map { $0 != "built_in" } ?? !publicKey.isEmpty
+    }
 }

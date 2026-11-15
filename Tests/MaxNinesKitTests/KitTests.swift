@@ -50,7 +50,13 @@ let hostsJSON = """
       {"id": "44cf", "public_key": "c3d4", "hostname": "new", "state": "pending", "online": false},
       {"id": "server", "public_key": "", "hostname": "MaxNines server", "state": "approved",
        "online": false},
-      {"id": "fleet", "public_key": "", "hostname": "Fleet", "state": "approved", "online": false}
+      {"id": "fleet", "public_key": "", "hostname": "Fleet", "state": "approved", "online": false},
+      {"id": "55d0", "kind": "agentless", "public_key": "", "hostname": "orders-db",
+       "state": "approved", "online": true, "health": "online", "last_seen_ms": 3},
+      {"id": "66e1", "kind": "agentless", "public_key": "", "hostname": "not-set-up-yet",
+       "state": "approved", "online": false, "health": "not_read", "last_seen_ms": null},
+      {"id": "77f2", "kind": "built_in", "public_key": "", "hostname": "MaxNines server",
+       "state": "approved", "online": false, "health": "offline"}
     ]
     """
 
@@ -89,9 +95,10 @@ let now = Date(timeIntervalSince1970: 1_793_940_300)
     #expect(overview.headline == "1 critical, 2 warnings")
     // Only what ended in the last hour.
     #expect(overview.resolved.map(\.id) == [5])
-    // Approved agents, not ones waiting or the server's built-in hosts.
-    #expect(overview.hosts == 2)
-    #expect(overview.hostsOnline == 1)
+    // Approved hosts, with an agent or without, but not ones waiting, the server's
+    // built-in hosts, or one with nothing read for it, which couldn't be online.
+    #expect(overview.hosts == 3)
+    #expect(overview.hostsOnline == 2)
 }
 
 @Test func nothingFiringSaysSo() {

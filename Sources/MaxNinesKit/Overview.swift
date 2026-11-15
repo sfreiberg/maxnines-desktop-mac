@@ -24,9 +24,9 @@ public struct Overview: Equatable, Sendable {
                 .filter { ($0.resolvedMs ?? 0) >= since }
                 .sorted { ($0.resolvedMs ?? 0) > ($1.resolvedMs ?? 0) }
                 .prefix(Overview.mostResolved))
-        let agents = hosts.filter(\.isAgent)
-        self.hosts = agents.count
-        hostsOnline = agents.filter(\.online).count
+        let counted = hosts.filter(\.isCounted)
+        self.hosts = counted.count
+        hostsOnline = counted.filter(\.online).count
     }
 
     public var critical: Int { firing.filter { $0.severity == .critical }.count }

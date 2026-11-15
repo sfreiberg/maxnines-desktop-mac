@@ -91,7 +91,7 @@ final class Store: ObservableObject {
         let key = apiKey.isEmpty ? Keychain.apiKey() ?? "" : apiKey
         do {
             let client = try Client(address: address, apiKey: key)
-            let hosts = try await client.hosts().filter(\.isAgent)
+            let hosts = try await client.hosts().filter(\.isCounted)
             return .success("Connected. It has \(hosts.count) \(hosts.count == 1 ? "host" : "hosts").")
         } catch let error as ClientError {
             return .failure(error)
