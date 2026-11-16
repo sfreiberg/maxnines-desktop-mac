@@ -26,6 +26,14 @@ public struct Notice: Equatable, Sendable {
     public let acknowledges: Int?
     /// The page it opens.
     public let path: String
+
+    public init(id: String, title: String, body: String, acknowledges: Int?, path: String) {
+        self.id = id
+        self.title = title
+        self.body = body
+        self.acknowledges = acknowledges
+        self.path = path
+    }
 }
 
 /// More than this many at once become one notification, so a storm doesn't
@@ -44,14 +52,17 @@ public func notices(from old: Alerts, to new: Alerts, when: NotifyWhen, now: Dat
     var started: [Notice] = []
     for alert in new.open where !alert.isSilenced {
         let was = before[alert.id]
-        // A new alert, or one that's got worse.
-        guard was == nil || (was?.severity == .warning && alert.severity == .critical) else { continue }
+        // A new alert, one whose silence ended while it was still firing, as the
+        // server tells people about then, or one that's got worse.
+        let unsilenced = was?.isSilenced == true
+        let worse = was?.severity == .warning && alert.severity == .critical
+        guard was == nil || unsilenced || worse else { continue }
         guard alert.severity == .critical ? when.critical : when.warnings else { continue }
         let level = alert.severity == .critical ? "Critical" : "Warning"
         started.append(
             Notice(
                 id: "alert-\(alert.id)-\(alert.severity.rawValue)",
-                title: "\(was == nil ? level : "Now critical"): \(alert.ruleName)",
+                title: "\(was == nil || unsilenced ? level : "Now critical"): \(alert.ruleName)",
                 body: alert.summary,
                 acknowledges: alert.isAcknowledged ? nil : alert.id,
                 path: page(alert)))

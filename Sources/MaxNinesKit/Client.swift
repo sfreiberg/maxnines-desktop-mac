@@ -10,6 +10,8 @@ public enum ClientError: Error, Equatable, LocalizedError {
     case status(Int)
     /// Something answered, but not as a MaxNines server does.
     case notMaxNines
+    /// The alert's rule has been deleted, so a silence can't name it.
+    case cantSilence
 
     public var errorDescription: String? {
         switch self {
@@ -18,6 +20,7 @@ public enum ClientError: Error, Equatable, LocalizedError {
         case .notAllowed: "This API key isn't allowed to do that. Acknowledging and silencing need a responder key"
         case .status(let code): "The server answered with status \(code)"
         case .notMaxNines: "That address didn't answer like a MaxNines server"
+        case .cantSilence: "This alert's rule has been deleted, so it can't be silenced from here"
         }
     }
 }
@@ -123,19 +126,23 @@ public struct Client: Sendable {
         _ = try await send(request("POST", "silences", body: Client.silenceBody(alert, for: duration)))
     }
 
-    /// A silence for one alert: its rule on its host. An alert about a group of
-    /// hosts belongs to none, so only its rule is named.
-    static func silenceBody(_ alert: ServerAlert, for duration: TimeInterval) -> Data {
+    /// A silence for this alert and nothing else: its rule, on its host, for its
+    /// series. An alert about a group of hosts belongs to no one host, so it has no
+    /// filter, which the server takes to mean it alone.
+    static func silenceBody(_ alert: ServerAlert, for duration: TimeInterval) throws -> Data {
+        // Without a rule the silence would cover every rule.
+        guard let rule = alert.ruleId else { throw ClientError.cantSilence }
         var body: [String: Any] = [
             "reason": "Silenced from the menu bar",
             "duration_secs": Int(duration),
+            "rule_id": rule,
         ]
-        if let rule = alert.ruleId {
-            body["rule_id"] = rule
-        }
         if alert.hostId != "fleet" {
             body["filter"] = "id=\(alert.hostId)"
         }
-        return (try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])) ?? Data()
+        if let series = alert.series, !series.isEmpty {
+            body["series"] = series
+        }
+        return try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
     }
 }

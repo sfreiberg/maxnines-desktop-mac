@@ -15,6 +15,9 @@ final class Store: ObservableObject {
     @Published var actionProblem: String?
     @Published private(set) var address: String
     @Published private(set) var interval: Int
+    /// Whether a key is saved. Kept here, as asking the Keychain on every
+    /// keystroke in Settings is slow.
+    @Published private(set) var hasAPIKey: Bool
 
     private var client: Client?
     private var polling: Task<Void, Never>?
@@ -24,6 +27,11 @@ final class Store: ObservableObject {
     private var lastAlerts: Alerts?
     /// Counts each change of settings, so an answer to the old ones is dropped.
     private var connection = 0
+    /// Counts each time the server is asked, and which of those answers was used
+    /// last, so an answer overtaken by a later one is dropped. Several can be
+    /// asking at once: the regular check, Refresh, and the one after each action.
+    private var asks = 0
+    private var answered = 0
     let notifier = Notifier()
 
     static let intervals = [15, 30, 60]
@@ -43,17 +51,27 @@ final class Store: ObservableObject {
         address = defaults.string(forKey: Store.addressKey) ?? ""
         let saved = defaults.integer(forKey: Store.intervalKey)
         interval = Store.intervals.contains(saved) ? saved : Store.intervals[0]
+        let apiKey = Keychain.apiKey() ?? ""
+        hasAPIKey = !apiKey.isEmpty
         notifier.onAcknowledge = { [weak self] alert in
-            self?.act { try await $0.acknowledge(alertID: alert) }
+            // Acknowledged from a notification, so a notification says if it didn't
+            // work: the menu, where it would otherwise show, may never be opened.
+            self?.act({ try await $0.acknowledge(alertID: alert) }) { problem in
+                self?.notifier.post(
+                    Notice(
+                        id: "acknowledge-failed-\(alert)-\(Date().milliseconds)",
+                        title: "Couldn't acknowledge the alert",
+                        body: problem,
+                        acknowledges: nil,
+                        path: "/alerts"))
+            }
         }
         notifier.onOpen = { [weak self] path in self?.open(path) }
         notifier.start(asking: notifyWhen.any)
-        connect(apiKey: Keychain.apiKey() ?? "")
+        connect(apiKey: apiKey)
     }
 
     var isSetUp: Bool { client != nil }
-    var hasAPIKey: Bool { !(Keychain.apiKey() ?? "").isEmpty }
-    var sendsKeyInTheClear: Bool { client?.sendsKeyInTheClear ?? false }
 
     var headline: String {
         if !isSetUp {
@@ -81,9 +99,11 @@ final class Store: ObservableObject {
         if !apiKey.isEmpty {
             Keychain.setAPIKey(apiKey)
         }
+        let saved = Keychain.apiKey() ?? ""
+        hasAPIKey = !saved.isEmpty
         overview = nil
         updated = nil
-        connect(apiKey: Keychain.apiKey() ?? "")
+        connect(apiKey: saved)
     }
 
     private func connect(apiKey: String) {
@@ -92,7 +112,15 @@ final class Store: ObservableObject {
         // Another server's alerts aren't news about this one's.
         lastAlerts = nil
         connection += 1
-        client = apiKey.isEmpty ? nil : try? Client(address: address, apiKey: apiKey)
+        client = nil
+        if !apiKey.isEmpty && !address.isEmpty {
+            do {
+                client = try Client(address: address, apiKey: apiKey)
+            } catch {
+                // Saying why beats just saying it isn't set up.
+                problem = error.localizedDescription
+            }
+        }
         guard client != nil else { return }
         polling = Task { [weak self] in
             while !Task.isCancelled {
@@ -106,6 +134,10 @@ final class Store: ObservableObject {
     func refresh() async {
         guard let client else { return }
         let asked = connection
+        asks += 1
+        let ask = asks
+        // Whether this is still the newest answer for the settings now in use.
+        func current() -> Bool { connection == asked && ask > answered }
         do {
             async let alertsAsked = client.alerts()
             async let hostsAsked = client.hosts()
@@ -115,8 +147,8 @@ final class Store: ObservableObject {
             async let silencesAsked = try? client.silences()
             let (alerts, hosts) = try await (alertsAsked, hostsAsked)
             let (checks, silences) = await (checksAsked, silencesAsked)
-            // The settings changed while it was asking.
-            guard connection == asked else { return }
+            guard current() else { return }
+            answered = ask
             overview = Overview(alerts: alerts, hosts: hosts, checks: checks, silences: silences?.active ?? [])
             updated = Date()
             problem = nil
@@ -126,8 +158,11 @@ final class Store: ObservableObject {
                 }
             }
             lastAlerts = alerts
-        } catch is CancellationError {
         } catch {
+            // Cancelled because the settings changed, or overtaken by a later
+            // answer, it says nothing about the server now.
+            guard current(), !Task.isCancelled, !isCancellation(error) else { return }
+            answered = ask
             problem = error.localizedDescription
         }
     }
@@ -154,14 +189,20 @@ final class Store: ObservableObject {
         act { try await $0.silence(alert, for: 3600) }
     }
 
-    private func act(_ action: @escaping (Client) async throws -> Void) {
-        guard let client else { return }
+    /// Does something on the server, then asks it again to show the result.
+    /// `failed` is told why it didn't work, as well as the menu.
+    private func act(_ action: @escaping (Client) async throws -> Void, failed: ((String) -> Void)? = nil) {
+        guard let client else {
+            failed?("MaxNines isn't set up")
+            return
+        }
         Task {
             do {
                 try await action(client)
                 actionProblem = nil
             } catch {
                 actionProblem = error.localizedDescription
+                failed?(error.localizedDescription)
             }
             await refresh()
         }
@@ -173,4 +214,8 @@ final class Store: ObservableObject {
             NSWorkspace.shared.open(client.page(path))
         }
     }
+}
+
+private func isCancellation(_ error: Error) -> Bool {
+    error is CancellationError || (error as? URLError)?.code == .cancelled
 }

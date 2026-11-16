@@ -137,17 +137,35 @@ let now = Date(timeIntervalSince1970: 1_793_940_300)
     }
 }
 
-@Test func aSilenceCoversTheAlertsRuleOnItsHost() throws {
+@Test func aSilenceCoversTheAlertAndNothingElse() throws {
     let (alerts, _) = try decoded()
     let body = { (alert: ServerAlert) in
-        String(decoding: Client.silenceBody(alert, for: 3600), as: UTF8.self)
+        String(decoding: try Client.silenceBody(alert, for: 3600), as: UTF8.self)
     }
+    // Its rule on its host.
     #expect(
-        body(alerts.open[0])
+        try body(alerts.open[0])
             == #"{"duration_secs":3600,"filter":"id=22ad9264b6eb708ffdbedcd5cc073e5c","reason":"Silenced from the menu bar","rule_id":1}"#
     )
-    // One about a group of hosts has no host to name, and this one's rule is gone.
-    #expect(body(alerts.open[1]) == #"{"duration_secs":3600,"reason":"Silenced from the menu bar"}"#)
+    // Only its own container, not the rule's others on the same host.
+    #expect(
+        try body(alerts.resolved[0])
+            == #"{"duration_secs":3600,"filter":"id=a","reason":"Silenced from the menu bar","rule_id":2,"series":"web"}"#
+    )
+    // One about a group of hosts has no host to name, and a filter would leave it out.
+    let fleet = try Client.decoder.decode(
+        ServerAlert.self,
+        from: Data(
+            #"""
+            {"id": 11, "rule_id": 6, "rule_name": "Half the web hosts down", "severity": "critical",
+             "host_id": "fleet", "hostname": "Fleet", "series": "", "summary": "Half down",
+             "started_ms": 1, "resolved_ms": null, "acknowledged_by": null, "silence_id": null,
+             "maintenance_window_id": null}
+            """#.utf8))
+    #expect(try body(fleet) == #"{"duration_secs":3600,"reason":"Silenced from the menu bar","rule_id":6}"#)
+    // Without its rule, which has been deleted, a silence would cover every rule.
+    #expect(!alerts.open[1].canBeSilenced)
+    #expect(throws: ClientError.cantSilence) { try Client.silenceBody(alerts.open[1], for: 3600) }
 }
 
 // MARK: Checks and silences
@@ -282,6 +300,15 @@ let everything = NotifyWhen(critical: true, warnings: true, resolved: true)
     #expect(all[0].acknowledges == nil)
     // Getting better isn't news.
     #expect(notices(from: new, to: old, when: everything, now: now).isEmpty)
+}
+
+@Test func anAlertStillFiringWhenItsSilenceEndsIsNotified() {
+    let old = Alerts(open: [alert(1, .critical, silenced: true), alert(2, .warning, silenced: true)], resolved: [])
+    let new = Alerts(open: [alert(1, .critical), alert(2, .critical)], resolved: [])
+    // As the server tells people then, and as what it is now, not how it changed.
+    #expect(notices(from: old, to: new, when: everything, now: now).map(\.title) == ["Critical: Rule 1", "Critical: Rule 2"])
+    // Still silenced, it stays quiet.
+    #expect(notices(from: old, to: old, when: everything, now: now).isEmpty)
 }
 
 @Test func resolvedAlertsSayHowLongTheyLasted() {

@@ -69,7 +69,7 @@ struct PopoverView: View {
 
     /// Where it's looking, and how fresh what it shows is.
     private func status(now: Date) -> String {
-        guard store.isSetUp else { return "Add your server in Settings" }
+        guard store.isSetUp else { return store.problem ?? "Add your server in Settings" }
         let server = URL(string: store.address)?.host() ?? store.address
         if let problem = store.problem {
             let since = store.updated.map { ", last heard \(age(sinceMs: $0.milliseconds, now: now)) ago" }
@@ -292,13 +292,15 @@ private struct FiringRow: View {
                 }
                 .buttonStyle(.plain)
                 Text(detail).font(Theme.detail).foregroundStyle(Theme.muted)
-                if !alert.isAcknowledged || !alert.isSilenced {
+                // A silence names the alert's rule, so one whose rule is gone can't have one.
+                let canSilence = !alert.isSilenced && alert.canBeSilenced
+                if !alert.isAcknowledged || canSilence {
                     HStack(spacing: 8) {
                         if !alert.isAcknowledged {
                             Button("Acknowledge") { store.acknowledge(alert) }
                                 .buttonStyle(QuietButtonStyle())
                         }
-                        if !alert.isSilenced {
+                        if canSilence {
                             Button("Silence 1 hour") { store.silenceForAnHour(alert) }
                                 .buttonStyle(QuietButtonStyle(filled: false))
                         }

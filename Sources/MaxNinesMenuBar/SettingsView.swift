@@ -24,14 +24,16 @@ struct SettingsView: View {
                 )
                 .font(.callout)
                 .foregroundStyle(.secondary)
-                if address.lowercased().hasPrefix("http://") {
+                if let addressProblem {
+                    Text(addressProblem).font(.callout).foregroundStyle(.red)
+                } else if sendsKeyInTheClear {
                     Text("Over plain http the key crosses the network unencrypted, so only use it on a network you trust.")
                         .font(.callout)
                         .foregroundStyle(.orange)
                 }
                 HStack(spacing: 12) {
                     Button("Test connection") { test() }
-                        .disabled(testing || address.isEmpty || (apiKey.isEmpty && !store.hasAPIKey))
+                        .disabled(testing || !canUse)
                     if testing {
                         ProgressView().controlSize(.small)
                     }
@@ -54,7 +56,7 @@ struct SettingsView: View {
                         apiKey = ""
                     }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(address.isEmpty || (apiKey.isEmpty && !store.hasAPIKey))
+                    .disabled(!canUse)
                 }
             }
             NotificationSettings(notifier: store.notifier)
@@ -73,6 +75,26 @@ struct SettingsView: View {
             address = store.address
             interval = store.interval
         }
+    }
+
+    /// What's typed, read the way it will be used, or nil while there's nothing.
+    private var typed: Result<Client, Error>? {
+        address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? nil : Result { try Client(address: address, apiKey: "") }
+    }
+
+    private var addressProblem: String? {
+        if case .failure(let error) = typed { error.localizedDescription } else { nil }
+    }
+
+    private var sendsKeyInTheClear: Bool {
+        if case .success(let client) = typed { client.sendsKeyInTheClear } else { false }
+    }
+
+    /// Whether there's an address that works and a key, typed or saved.
+    private var canUse: Bool {
+        guard case .success = typed else { return false }
+        return !apiKey.isEmpty || store.hasAPIKey
     }
 
     private func test() {

@@ -28,6 +28,9 @@ public struct ServerAlert: Decodable, Identifiable, Equatable, Sendable {
     public let severity: Severity
     public let hostId: String
     public let hostname: String
+    /// Which of its rule's series it's about, such as a check's name. Empty for
+    /// alerts about the host as a whole, and missing from older servers.
+    public let series: String?
     public let summary: String
     public let startedMs: Int64
     public let resolvedMs: Int64?
@@ -36,6 +39,9 @@ public struct ServerAlert: Decodable, Identifiable, Equatable, Sendable {
     public let maintenanceWindowId: Int?
 
     public var isAcknowledged: Bool { acknowledgedBy != nil }
+    /// A silence for one alert names its rule, so one whose rule has been deleted
+    /// has nothing to name.
+    public var canBeSilenced: Bool { ruleId != nil }
     /// Whether a silence or a maintenance window is keeping its notifications back.
     public var isSilenced: Bool { silenceId != nil || maintenanceWindowId != nil }
 }
