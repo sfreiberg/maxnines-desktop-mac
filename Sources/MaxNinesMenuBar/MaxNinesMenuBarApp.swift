@@ -29,27 +29,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-/// The icon says the worst thing happening: filled with a count when something
-/// is critical, a count alone for warnings, and a question mark when the server
-/// can't be asked, so that quiet isn't mistaken for fine.
+/// The icon says the worst thing happening, as `IconState` describes.
 struct MenuBarLabel: View {
     @ObservedObject var store: Store
 
     var body: some View {
-        HStack(spacing: 3) {
-            Image(systemName: store.overview?.worst == .critical ? "9.square.fill" : "9.square")
-            if let mark {
-                Text(mark)
-            }
-        }
-        .accessibilityLabel("MaxNines, \(store.headline)")
-    }
-
-    private var mark: String? {
-        if store.problem != nil || store.overview == nil {
-            return "?"
-        }
-        let firing = store.overview?.firing.count ?? 0
-        return firing > 0 ? "\(firing)" : nil
+        Image(nsImage: menuBarImage(IconState(overview: store.overview, problem: store.problem)))
+            .accessibilityLabel("MaxNines, \(store.headline)")
     }
 }
