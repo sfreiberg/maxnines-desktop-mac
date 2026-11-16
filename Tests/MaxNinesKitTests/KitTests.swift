@@ -119,21 +119,22 @@ let now = Date(timeIntervalSince1970: 1_793_940_300)
     #expect(ago(-5) == "0s")
 }
 
-@Test func theServerIsFoundFromWhateverPageWasPasted() throws {
-    let client = try Client(address: " http://192.168.0.155:9000/alerts?x=1#top ", apiKey: " key\n")
-    #expect(client.server.absoluteString == "http://192.168.0.155:9000")
-    #expect(client.page("/hosts").absoluteString == "http://192.168.0.155:9000/hosts")
-    #expect(client.sendsKeyInTheClear)
+@Test func theServerIsFoundFromWhateverPageWasPasted() async throws {
+    let server = try ServerAddress(" http://192.168.0.155:9000/alerts?x=1#top ")
+    #expect(server.url.absoluteString == "http://192.168.0.155:9000")
+    #expect(server.page("/hosts").absoluteString == "http://192.168.0.155:9000/hosts")
+    #expect(server.isInTheClear)
 
-    let request = client.request("POST", "alerts/7/acknowledge")
+    let client = Client(server: server, tokens: FixedToken("mxa_1"))
+    let request = client.request("POST", "alerts/7/acknowledge", token: "mxa_1")
     #expect(request.url?.absoluteString == "http://192.168.0.155:9000/api/v1/alerts/7/acknowledge")
     #expect(request.httpMethod == "POST")
-    #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer key")
+    #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer mxa_1")
 
-    #expect(try !Client(address: "https://monitor.example.com", apiKey: "k").sendsKeyInTheClear)
-    #expect(try !Client(address: "http://localhost:9000", apiKey: "k").sendsKeyInTheClear)
+    #expect(try !ServerAddress("https://monitor.example.com").isInTheClear)
+    #expect(try !ServerAddress("http://localhost:9000").isInTheClear)
     for bad in ["", "monitor.example.com", "ftp://example.com", "http://"] {
-        #expect(throws: ClientError.badAddress) { try Client(address: bad, apiKey: "k") }
+        #expect(throws: ClientError.badAddress) { try ServerAddress(bad) }
     }
 }
 
@@ -337,4 +338,484 @@ let everything = NotifyWhen(critical: true, warnings: true, resolved: true)
     // Three at once are each shown.
     let three = Alerts(open: (1...3).map { alert($0, .critical) }, resolved: [])
     #expect(notices(from: old, to: three, when: everything, now: now).count == 3)
+}
+
+// MARK: Signing in
+
+/// Always the same access token, for tests that don't refresh.
+struct FixedToken: AccessTokens {
+    let token: String
+    init(_ token: String) { self.token = token }
+    func accessToken() async throws -> String { token }
+    func accessToken(replacing rejected: String) async throws -> String { token }
+}
+
+/// Something that changes while a test runs, from any task.
+final class Box<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Value
+    init(_ value: Value) { stored = value }
+    var value: Value {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
+    }
+    /// Reads and changes it in one go.
+    func locked<Answer>(_ change: (inout Value) -> Answer) -> Answer {
+        lock.withLock { change(&stored) }
+    }
+}
+
+/// Holds back whoever waits on it until it's opened.
+actor Gate {
+    private var isOpen = false
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+    func wait() async {
+        if isOpen { return }
+        await withCheckedContinuation { waiting.append($0) }
+    }
+    func open() {
+        isOpen = true
+        waiting.forEach { $0.resume() }
+        waiting = []
+    }
+}
+
+/// Answers requests as a server would, and remembers them.
+final class FakeServer: Sendable {
+    let requests = Box<[URLRequest]>([])
+    let answer: @Sendable (URLRequest) async throws -> (Int, String)
+
+    init(_ answer: @escaping @Sendable (URLRequest) async throws -> (Int, String)) {
+        self.answer = answer
+    }
+
+    var transport: Transport {
+        { request in
+            self.requests.locked { $0.append(request) }
+            let (status, body) = try await self.answer(request)
+            let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
+            return (Data(body.utf8), response)
+        }
+    }
+
+    /// How many requests went to `path`.
+    func count(_ path: String) -> Int {
+        requests.value.filter { $0.url?.path == path }.count
+    }
+}
+
+/// The fields of a form, or of a URL's query.
+func fields(_ encoded: String) -> [String: String] {
+    var fields: [String: String] = [:]
+    for pair in encoded.split(separator: "&") {
+        let parts = pair.split(separator: "=", maxSplits: 1).map {
+            $0.replacingOccurrences(of: "+", with: " ").removingPercentEncoding ?? ""
+        }
+        fields[parts[0]] = parts.count > 1 ? parts[1] : ""
+    }
+    return fields
+}
+
+func form(_ request: URLRequest) -> [String: String] {
+    fields(String(decoding: request.httpBody ?? Data(), as: UTF8.self))
+}
+
+func tokensJSON(_ access: String, _ refresh: String, expiresIn: Int = 3600, role: String = "responder") -> String {
+    """
+    {"access_token": "\(access)", "token_type": "Bearer", "expires_in": \(expiresIn),
+     "refresh_token": "\(refresh)", "refresh_token_expires_in": 7776000, "role": "\(role)",
+     "user": "you@example.com", "sign_in_id": 4}
+    """
+}
+
+let testServer = try! ServerAddress("https://monitor.example.com")
+
+@Test func theChallengeIsMadeAsRFC7636Says() {
+    // RFC 7636's own example.
+    let pkce = PKCE(verifier: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk")
+    #expect(pkce.challenge == "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM")
+
+    let random = PKCE()
+    #expect((43...128).contains(random.verifier.count))
+    #expect(random.verifier.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "-._~".contains($0)) })
+    #expect(random.challenge == PKCE.challenge(for: random.verifier))
+    #expect(random.challenge.count == 43)
+    #expect(PKCE().verifier != random.verifier)
+}
+
+@Test func theApprovalPageIsAskedForWithEverythingTheServerNeeds() throws {
+    let server = try ServerAddress("https://monitor.example.com/alerts?x=1")
+    let pkce = PKCE(verifier: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk")
+    let signIn = BrowserSignIn(server: server, port: 53682, device: " Sam's Mac+Pro & co\n", pkce: pkce, state: "af0ifjsldkj")
+    let url = signIn.authorizeURL
+    #expect(url.absoluteString.hasPrefix("https://monitor.example.com/oauth/authorize?"))
+    // A + in the name would otherwise arrive as a space.
+    #expect(url.absoluteString.contains("Mac%2BPro"))
+    #expect(
+        fields(url.query ?? "") == [
+            "response_type": "code",
+            "client_id": "maxnines-menubar",
+            "redirect_uri": "http://127.0.0.1:53682/callback",
+            "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+            "code_challenge_method": "S256",
+            "state": "af0ifjsldkj",
+            "device": "Sam's Mac+Pro & co",
+            "role": "responder",
+        ])
+
+    // The server takes up to 100 characters, with no control characters.
+    let long = BrowserSignIn(server: server, port: 1, device: String(repeating: "a\u{7}", count: 150), pkce: pkce, state: "s")
+    #expect(long.device == String(repeating: "a", count: 100))
+}
+
+@Test func theBrowsersAnswerIsReadAndCheckedAgainstTheState() {
+    let signIn = BrowserSignIn(server: testServer, port: 1, device: "", pkce: PKCE(), state: "abc")
+    #expect(signIn.answer(fromRequestLine: "GET /callback?code=mxc_123&state=abc HTTP/1.1") == .code("mxc_123"))
+    #expect(signIn.answer(fromRequestLine: "GET /callback?error=access_denied&state=abc HTTP/1.1") == .denied)
+    #expect(
+        signIn.answer(fromRequestLine: "GET /callback?error=invalid_request&state=abc HTTP/1.1")
+            == .failed("invalid_request"))
+    // An answer to some other request, or none at all, isn't this one's.
+    #expect(signIn.answer(fromRequestLine: "GET /callback?code=mxc_123&state=other HTTP/1.1") == nil)
+    #expect(signIn.answer(fromRequestLine: "GET /callback?code=mxc_123 HTTP/1.1") == nil)
+    #expect(signIn.answer(fromRequestLine: "GET /favicon.ico HTTP/1.1") == nil)
+    #expect(signIn.answer(fromRequestLine: "POST /callback?code=mxc_123&state=abc HTTP/1.1") == nil)
+    #expect(signIn.answer(fromRequestLine: "") == nil)
+}
+
+@Test func anApprovalIsSwappedForTokensAsTheServerExpects() async throws {
+    let server = FakeServer { _ in (200, tokensJSON("mxa_1", "mxr_1", role: "viewer")) }
+    let signIn = BrowserSignIn(server: testServer, port: 53682, device: "Mac", pkce: PKCE(), state: "s")
+    let tokens = try await SignInEndpoints(server: testServer, transport: server.transport)
+        .tokens(code: "mxc_1", signIn: signIn)
+    #expect(tokens == Tokens(accessToken: "mxa_1", expiresIn: 3600, refreshToken: "mxr_1", role: "viewer", user: "you@example.com"))
+
+    let request = try #require(server.requests.value.first)
+    #expect(request.url?.absoluteString == "https://monitor.example.com/oauth/token")
+    #expect(request.httpMethod == "POST")
+    #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/x-www-form-urlencoded")
+    #expect(
+        form(request) == [
+            "grant_type": "authorization_code",
+            "client_id": "maxnines-menubar",
+            "code": "mxc_1",
+            "redirect_uri": "http://127.0.0.1:53682/callback",
+            "code_verifier": signIn.pkce.verifier,
+        ])
+}
+
+@Test func theSignInEndpointsSayWhatWentWrong() async throws {
+    let said = Box((400, #"{"error": "invalid_grant", "error_description": "That code is wrong"}"#))
+    let server = FakeServer { _ in said.value }
+    let endpoints = SignInEndpoints(server: testServer, transport: server.transport)
+    let signIn = BrowserSignIn(server: testServer, port: 1, device: "", pkce: PKCE(), state: "s")
+
+    // A code that didn't work isn't being signed out: it's said as the server says it.
+    await #expect(throws: OAuthError.said("invalid_grant", "That code is wrong")) {
+        try await endpoints.tokens(code: "mxc_1", signIn: signIn)
+    }
+    #expect(OAuthError.said("invalid_grant", "That code is wrong").localizedDescription == "That code is wrong")
+    // A refresh token that doesn't work means signing in again.
+    await #expect(throws: ClientError.signedOut) { try await endpoints.refresh("mxr_1") }
+    #expect(form(server.requests.value[1]) == ["grant_type": "refresh_token", "client_id": "maxnines-menubar", "refresh_token": "mxr_1"])
+
+    said.value = (500, "oops")
+    await #expect(throws: ClientError.status(500)) { try await endpoints.refresh("mxr_1") }
+    said.value = (200, "<html>")
+    await #expect(throws: ClientError.notMaxNines) { try await endpoints.refresh("mxr_1") }
+
+    said.value = (200, "")
+    try await endpoints.revoke("mxr_1")
+    let revoke = try #require(server.requests.value.last)
+    #expect(revoke.url?.path == "/oauth/revoke")
+    #expect(form(revoke) == ["client_id": "maxnines-menubar", "token": "mxr_1"])
+}
+
+/// A holder for `server`, which keeps what it saves in `saved`.
+func holder(
+    _ server: FakeServer, saved: Box<[Tokens?]>, refreshToken: String = "mxr_0", clock: Box<Date>? = nil
+) -> TokenHolder {
+    TokenHolder(
+        refreshToken: refreshToken, endpoints: SignInEndpoints(server: testServer, transport: server.transport),
+        save: { tokens in saved.locked { $0.append(tokens) } }, now: { clock?.value ?? Date() })
+}
+
+@Test func onlyOneRefreshRunsAndEveryoneWaitsForIt() async throws {
+    let gate = Gate()
+    let refreshes = Box(0)
+    let server = FakeServer { request in
+        await gate.wait()
+        let count = refreshes.locked { $0 += 1; return $0 }
+        return (200, tokensJSON("mxa_\(count)", "mxr_\(count)"))
+    }
+    let saved = Box<[Tokens?]>([])
+    let tokens = holder(server, saved: saved)
+    let all = Task {
+        try await withThrowingTaskGroup(of: String.self) { group in
+            for _ in 0..<10 {
+                group.addTask { try await tokens.accessToken() }
+            }
+            return try await group.reduce(into: []) { $0.append($1) }
+        }
+    }
+    // Held at the server until the first refresh has started.
+    while server.requests.value.isEmpty {
+        await Task.yield()
+    }
+    for _ in 0..<100 {
+        await Task.yield()
+    }
+    await gate.open()
+    let got = try await all.value
+    #expect(got == Array(repeating: "mxa_1", count: 10))
+    #expect(server.count("/oauth/token") == 1)
+    #expect(saved.value.map { $0?.refreshToken } == ["mxr_1"])
+}
+
+@Test func theAccessTokenIsRefreshedAMinuteBeforeItRunsOut() async throws {
+    let refreshes = Box(0)
+    let server = FakeServer { request in
+        #expect(form(request)["refresh_token"] == "mxr_\(refreshes.value)")
+        refreshes.value += 1
+        return (200, tokensJSON("mxa_\(refreshes.value)", "mxr_\(refreshes.value)"))
+    }
+    let clock = Box(Date(timeIntervalSince1970: 1_000_000))
+    let saved = Box<[Tokens?]>([])
+    let tokens = holder(server, saved: saved, clock: clock)
+
+    // Nothing in memory yet, as only the refresh token is saved.
+    #expect(try await tokens.accessToken() == "mxa_1")
+    clock.value += 3600 - 61
+    #expect(try await tokens.accessToken() == "mxa_1")
+    clock.value += 2
+    #expect(try await tokens.accessToken() == "mxa_2")
+    #expect(refreshes.value == 2)
+    // Each new refresh token is kept, and the next refresh uses it.
+    #expect(saved.value.map { $0?.refreshToken } == ["mxr_1", "mxr_2"])
+}
+
+@Test func justSignedInTheTokensAreUsedUntilTheyRunOut() async throws {
+    let server = FakeServer { _ in (200, tokensJSON("mxa_2", "mxr_2")) }
+    let clock = Box(Date(timeIntervalSince1970: 1_000_000))
+    let tokens = TokenHolder(
+        tokens: Tokens(accessToken: "mxa_1", expiresIn: 3600, refreshToken: "mxr_1", role: "responder", user: "a"),
+        endpoints: SignInEndpoints(server: testServer, transport: server.transport), save: { _ in },
+        now: { clock.value })
+    #expect(try await tokens.accessToken() == "mxa_1")
+    #expect(server.requests.value.isEmpty)
+    clock.value += 3600
+    #expect(try await tokens.accessToken() == "mxa_2")
+    #expect(form(server.requests.value[0])["refresh_token"] == "mxr_1")
+}
+
+@Test func theNewRefreshTokenIsKeptBeforeTheNewAccessTokenIsUsed() async throws {
+    let saved = Box<[Tokens?]>([])
+    let server = FakeServer { request in
+        if request.url?.path == "/oauth/token" {
+            return (200, tokensJSON("mxa_new", "mxr_new"))
+        }
+        // By the time the new access token reaches the server, its refresh token is kept.
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer mxa_new")
+        #expect(saved.value.last??.refreshToken == "mxr_new")
+        return (200, "[]")
+    }
+    let client = Client(server: testServer, tokens: holder(server, saved: saved), transport: server.transport)
+    #expect(try await client.hosts().isEmpty)
+}
+
+@Test func aRefreshTokenThatNoLongerWorksSignsOut() async throws {
+    let server = FakeServer { _ in
+        (400, #"{"error": "invalid_grant", "error_description": "That refresh token doesn't work any more"}"#)
+    }
+    let saved = Box<[Tokens?]>([])
+    let tokens = holder(server, saved: saved)
+    await #expect(throws: ClientError.signedOut) { try await tokens.accessToken() }
+    // It's forgotten, and not tried again.
+    #expect(saved.value == [nil])
+    await #expect(throws: ClientError.signedOut) { try await tokens.accessToken() }
+    #expect(server.requests.value.count == 1)
+    #expect(ClientError.signedOut.localizedDescription == "Signed out: sign in again")
+}
+
+@Test func aRefreshThatCouldntReachTheServerIsTriedAgain() async throws {
+    let fails = Box(true)
+    let server = FakeServer { _ in
+        if fails.value { throw URLError(.notConnectedToInternet) }
+        return (200, tokensJSON("mxa_1", "mxr_1"))
+    }
+    let saved = Box<[Tokens?]>([])
+    let tokens = holder(server, saved: saved)
+    await #expect(throws: URLError.self) { try await tokens.accessToken() }
+    #expect(saved.value.isEmpty)
+    fails.value = false
+    #expect(try await tokens.accessToken() == "mxa_1")
+    // The same refresh token, as it was never swapped.
+    #expect(server.requests.value.map { form($0)["refresh_token"] } == ["mxr_0", "mxr_0"])
+}
+
+@Test func aTurnedDownRequestIsRefreshedAndTriedOnceMore() async throws {
+    // The first five are held until all five have come, so all are turned down.
+    let gate = Gate()
+    let held = Box(0)
+    let server = FakeServer { request in
+        if request.url?.path == "/oauth/token" {
+            return (200, tokensJSON("mxa_new", "mxr_new"))
+        }
+        if request.value(forHTTPHeaderField: "Authorization") == "Bearer mxa_new" {
+            return (200, "[]")
+        }
+        let arrived = held.locked { $0 += 1; return $0 }
+        if arrived == 5 {
+            await gate.open()
+        }
+        await gate.wait()
+        return (401, "")
+    }
+    let tokens = TokenHolder(
+        tokens: Tokens(accessToken: "mxa_old", expiresIn: 3600, refreshToken: "mxr_old", role: "responder", user: "a"),
+        endpoints: SignInEndpoints(server: testServer, transport: server.transport), save: { _ in })
+    let client = Client(server: testServer, tokens: tokens, transport: server.transport)
+    // Several turned down at once still refresh only once.
+    try await withThrowingTaskGroup(of: Void.self) { group in
+        for _ in 0..<5 {
+            group.addTask {
+                let hosts = try await client.hosts()
+                #expect(hosts.isEmpty)
+            }
+        }
+        try await group.waitForAll()
+    }
+    #expect(server.count("/oauth/token") == 1)
+    #expect(server.count("/api/v1/hosts") == 10)
+    // Once refreshed, the new token is used from the start.
+    _ = try await client.hosts()
+    #expect(server.count("/api/v1/hosts") == 11)
+}
+
+@Test func aRequestTurnedDownTwiceIsntTriedAThirdTime() async throws {
+    let server = FakeServer { _ in (401, "") }
+    let client = Client(server: testServer, tokens: FixedToken("mxa_1"), transport: server.transport)
+    await #expect(throws: ClientError.notSignedIn) { try await client.hosts() }
+    #expect(server.requests.value.count == 2)
+}
+
+@Test func whatTheServerSaysIsntAllowedIsShown() async throws {
+    let said = Box((403, #"{"error": "This needs the responder role, and this app acts as a viewer"}"#))
+    let server = FakeServer { _ in said.value }
+    let client = Client(server: testServer, tokens: FixedToken("mxa_1"), transport: server.transport)
+    await #expect(throws: ClientError.notAllowed("This needs the responder role, and this app acts as a viewer")) {
+        try await client.acknowledge(alertID: 7)
+    }
+    #expect(
+        ClientError.notAllowed("This needs the responder role, and this app acts as a viewer").localizedDescription
+            == "This needs the responder role, and this app acts as a viewer")
+    said.value = (403, "")
+    await #expect(throws: ClientError.notAllowed(nil)) { try await client.acknowledge(alertID: 7) }
+}
+
+@Test func signingOutRevokesTheNewestTokenAndForgetsIt() async throws {
+    let server = FakeServer { request in
+        request.url?.path == "/oauth/token" ? (200, tokensJSON("mxa_1", "mxr_1")) : (200, "")
+    }
+    let saved = Box<[Tokens?]>([])
+    let tokens = holder(server, saved: saved)
+    _ = try await tokens.accessToken()
+    try await tokens.signOut()
+    let revoke = try #require(server.requests.value.last)
+    #expect(revoke.url?.path == "/oauth/revoke")
+    #expect(form(revoke)["token"] == "mxr_1")
+    #expect(saved.value.map { $0?.refreshToken } == ["mxr_1", nil])
+    await #expect(throws: ClientError.signedOut) { try await tokens.accessToken() }
+    #expect(server.count("/oauth/token") == 1)
+}
+
+@Test func signingOutWhenTheServerCantBeToldStillForgets() async throws {
+    let server = FakeServer { _ in throw URLError(.cannotConnectToHost) }
+    let saved = Box<[Tokens?]>([])
+    let tokens = holder(server, saved: saved)
+    await #expect(throws: URLError.self) { try await tokens.signOut() }
+    #expect(saved.value == [nil])
+    #expect(form(server.requests.value[0])["token"] == "mxr_0")
+}
+
+// MARK: Through the browser
+
+/// Does what the browser does: asks the server's page, and is sent back to the
+/// app with `answer`. Gives back what the app showed for an icon it asked for,
+/// and the page it showed at the end.
+func browser(answering answer: @escaping @Sendable ([String: String]) -> String, asked: Box<[String: String]>)
+    -> (@Sendable (URL) async -> Void, Box<Task<(Int, String), Error>?>)
+{
+    let visit = Box<Task<(Int, String), Error>?>(nil)
+    let open: @Sendable (URL) async -> Void = { url in
+        let query = fields(url.query ?? "")
+        asked.value = query
+        visit.value = Task {
+            let session = URLSession(configuration: .ephemeral)
+            let redirect = try #require(query["redirect_uri"])
+            let root = redirect.replacingOccurrences(of: "/callback", with: "")
+            let (_, icon) = try await session.data(from: URL(string: "\(root)/favicon.ico")!)
+            let (page, _) = try await session.data(from: URL(string: "\(redirect)?\(answer(query))")!)
+            return ((icon as? HTTPURLResponse)?.statusCode ?? 0, String(decoding: page, as: UTF8.self))
+        }
+    }
+    return (open, visit)
+}
+
+@Test func signingInThroughTheBrowserGetsTokens() async throws {
+    let asked = Box<[String: String]>([:])
+    let server = FakeServer { request in
+        let sent = form(request)
+        // The verifier is the one the challenge sent to the browser was made from.
+        #expect(PKCE.challenge(for: sent["code_verifier"] ?? "") == asked.value["code_challenge"])
+        #expect(sent["redirect_uri"] == asked.value["redirect_uri"])
+        #expect(sent["code"] == "mxc_1")
+        return (200, tokensJSON("mxa_1", "mxr_1"))
+    }
+    let (open, visit) = browser(answering: { "code=mxc_1&state=\($0["state"] ?? "")" }, asked: asked)
+    let tokens = try await signInThroughBrowser(
+        server: testServer, device: "Sam's Mac", open: open, transport: server.transport)
+    #expect(tokens.refreshToken == "mxr_1")
+    #expect(asked.value["device"] == "Sam's Mac")
+    #expect(asked.value["redirect_uri"]?.hasPrefix("http://127.0.0.1:") == true)
+
+    let (icon, page) = try await #require(visit.value).value
+    #expect(icon == 404)
+    #expect(page.contains("Signed in to MaxNines"))
+    #expect(page.contains("You can close this tab."))
+}
+
+@Test func choosingDenyInTheBrowserSaysSoThere() async throws {
+    let asked = Box<[String: String]>([:])
+    let server = FakeServer { _ in (500, "") }
+    let (open, visit) = browser(answering: { "error=access_denied&state=\($0["state"] ?? "")" }, asked: asked)
+    await #expect(throws: SignInError.denied) {
+        try await signInThroughBrowser(server: testServer, device: "Mac", open: open, transport: server.transport)
+    }
+    let (_, page) = try await #require(visit.value).value
+    #expect(page.contains("Not signed in"))
+    #expect(page.contains("You chose Deny"))
+    #expect(server.requests.value.isEmpty)
+}
+
+@Test func signingInGivesUpWhenNothingComesBack() async throws {
+    let server = FakeServer { _ in (500, "") }
+    await #expect(throws: SignInError.timedOut) {
+        try await signInThroughBrowser(
+            server: testServer, device: "Mac", open: { _ in }, transport: server.transport, timeout: .milliseconds(100))
+    }
+}
+
+@Test func signingInCanBeCancelled() async throws {
+    let opened = Box(false)
+    let server = FakeServer { _ in (500, "") }
+    let signingIn = Task {
+        try await signInThroughBrowser(
+            server: testServer, device: "Mac", open: { _ in opened.value = true }, transport: server.transport)
+    }
+    while !opened.value {
+        await Task.yield()
+    }
+    signingIn.cancel()
+    await #expect(throws: CancellationError.self) { try await signingIn.value }
 }

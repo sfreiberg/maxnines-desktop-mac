@@ -3,10 +3,13 @@ import Foundation
 public enum ClientError: Error, Equatable, LocalizedError {
     /// The address isn't one a server could be at.
     case badAddress
-    /// The key is wrong, revoked or expired, or its owner is disabled.
+    /// The server turned the sign in down even after fresh tokens.
     case notSignedIn
-    /// The key's role doesn't allow this.
-    case notAllowed
+    /// The sign in has run out or been revoked, so the person has to sign in again.
+    case signedOut
+    /// What the person signed in as isn't allowed to do this. Holds what the server
+    /// said, if it said anything.
+    case notAllowed(String?)
     case status(Int)
     /// Something answered, but not as a MaxNines server does.
     case notMaxNines
@@ -16,8 +19,10 @@ public enum ClientError: Error, Equatable, LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .badAddress: "The server address isn't a web address"
-        case .notSignedIn: "The server didn't accept the API key"
-        case .notAllowed: "This API key isn't allowed to do that. Acknowledging and silencing need a responder key"
+        case .notSignedIn: "The server didn't accept the sign in"
+        case .signedOut: "Signed out: sign in again"
+        case .notAllowed(let said?): said
+        case .notAllowed(nil): "This sign in isn't allowed to do that. Acknowledging and silencing need the responder role"
         case .status(let code): "The server answered with status \(code)"
         case .notMaxNines: "That address didn't answer like a MaxNines server"
         case .cantSilence: "This alert's rule has been deleted, so it can't be silenced from here"
@@ -25,48 +30,76 @@ public enum ClientError: Error, Equatable, LocalizedError {
     }
 }
 
-/// Talks to one MaxNines server's API as the owner of an API key.
-public struct Client: Sendable {
-    public let server: URL
-    let apiKey: String
-    let session: URLSession
+/// Sends a request and gives back the answer. `URLSession` in the app, and
+/// something that answers by itself in the tests.
+public typealias Transport = @Sendable (URLRequest) async throws -> (Data, URLResponse)
 
-    /// `address` is what someone types: the address they open MaxNines at.
-    public init(address: String, apiKey: String, session: URLSession = .shared) throws {
-        let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
+public let urlSessionTransport: Transport = { try await URLSession.shared.data(for: $0) }
+
+/// Where a MaxNines server is: the root of the site, whatever page of it was
+/// pasted.
+public struct ServerAddress: Equatable, Sendable {
+    public let url: URL
+
+    /// `typed` is what someone types: the address they open MaxNines at.
+    public init(_ typed: String) throws {
+        let trimmed = typed.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmed), let scheme = url.scheme?.lowercased(),
             ["http", "https"].contains(scheme), url.host() != nil
         else {
             throw ClientError.badAddress
         }
-        // Whatever page of the site was pasted, the API is at its root.
         var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) ?? URLComponents()
         parts.path = ""
         parts.query = nil
         parts.fragment = nil
-        guard let server = parts.url else { throw ClientError.badAddress }
-        self.server = server
-        self.apiKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.session = session
+        guard let root = parts.url else { throw ClientError.badAddress }
+        self.url = root
     }
 
     /// A page of the web interface, such as `/alerts`.
     public func page(_ path: String) -> URL {
-        server.appending(path: path)
+        url.appending(path: path)
     }
 
-    /// Whether the key crosses the network unencrypted to somewhere other than
-    /// this Mac.
-    public var sendsKeyInTheClear: Bool {
-        let host = server.host() ?? ""
-        return server.scheme == "http" && !["localhost", "127.0.0.1", "::1"].contains(host)
+    /// Whether what the app sends crosses the network unencrypted to somewhere
+    /// other than this Mac.
+    public var isInTheClear: Bool {
+        let host = url.host() ?? ""
+        return url.scheme == "http" && !["localhost", "127.0.0.1", "::1"].contains(host)
+    }
+}
+
+/// Something that hands out access tokens: a `TokenHolder` in the app.
+public protocol AccessTokens: Sendable {
+    /// One that works, as far as is known.
+    func accessToken() async throws -> String
+    /// A newer one than `rejected`, which the server just turned down.
+    func accessToken(replacing rejected: String) async throws -> String
+}
+
+/// Talks to one MaxNines server's API as whoever signed in.
+public struct Client: Sendable {
+    public let server: ServerAddress
+    let tokens: any AccessTokens
+    let transport: Transport
+
+    public init(server: ServerAddress, tokens: any AccessTokens, transport: @escaping Transport = urlSessionTransport) {
+        self.server = server
+        self.tokens = tokens
+        self.transport = transport
     }
 
-    func request(_ method: String, _ path: String, body: Data? = nil) -> URLRequest {
-        var request = URLRequest(url: server.appending(path: "api/v1").appending(path: path))
+    /// A page of the web interface, such as `/alerts`.
+    public func page(_ path: String) -> URL {
+        server.page(path)
+    }
+
+    func request(_ method: String, _ path: String, body: Data? = nil, token: String) -> URLRequest {
+        var request = URLRequest(url: server.url.appending(path: "api/v1").appending(path: path))
         request.httpMethod = method
         request.timeoutInterval = 15
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         if let body {
             request.httpBody = body
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -74,19 +107,37 @@ public struct Client: Sendable {
         return request
     }
 
-    private func send(_ request: URLRequest) async throws -> Data {
-        let (data, response) = try await session.data(for: request)
-        guard let response = response as? HTTPURLResponse else { throw ClientError.notMaxNines }
-        switch response.statusCode {
+    /// Sends a request with the access token. If the server turns the token down,
+    /// it gets a newer one and tries once more.
+    private func send(_ method: String, _ path: String, body: Data? = nil) async throws -> Data {
+        let token = try await tokens.accessToken()
+        var (data, status) = try await attempt(request(method, path, body: body, token: token))
+        if status == 401 {
+            let newer = try await tokens.accessToken(replacing: token)
+            (data, status) = try await attempt(request(method, path, body: body, token: newer))
+        }
+        switch status {
         case 200..<300: return data
         case 401: throw ClientError.notSignedIn
-        case 403: throw ClientError.notAllowed
-        default: throw ClientError.status(response.statusCode)
+        case 403: throw ClientError.notAllowed(Client.said(in: data))
+        default: throw ClientError.status(status)
         }
     }
 
+    private func attempt(_ request: URLRequest) async throws -> (Data, Int) {
+        let (data, response) = try await transport(request)
+        guard let response = response as? HTTPURLResponse else { throw ClientError.notMaxNines }
+        return (data, response.statusCode)
+    }
+
+    /// What the server said went wrong, in an answer like `{"error": "…"}`.
+    static func said(in data: Data) -> String? {
+        struct Said: Decodable { let error: String }
+        return try? decoder.decode(Said.self, from: data).error
+    }
+
     private func get<Answer: Decodable>(_ path: String) async throws -> Answer {
-        let data = try await send(request("GET", path))
+        let data = try await send("GET", path)
         do {
             return try Client.decoder.decode(Answer.self, from: data)
         } catch {
@@ -116,14 +167,14 @@ public struct Client: Sendable {
         try await get("remote-checks")
     }
 
-    /// Says the key's owner is dealing with an alert.
+    /// Says whoever signed in is dealing with an alert.
     public func acknowledge(alertID: Int) async throws {
-        _ = try await send(request("POST", "alerts/\(alertID)/acknowledge"))
+        _ = try await send("POST", "alerts/\(alertID)/acknowledge")
     }
 
     /// Keeps an alert's notifications back for a while.
     public func silence(_ alert: ServerAlert, for duration: TimeInterval) async throws {
-        _ = try await send(request("POST", "silences", body: Client.silenceBody(alert, for: duration)))
+        _ = try await send("POST", "silences", body: Client.silenceBody(alert, for: duration))
     }
 
     /// A silence for this alert and nothing else: its rule, on its host, for its

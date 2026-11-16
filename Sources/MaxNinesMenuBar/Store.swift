@@ -1,6 +1,7 @@
 import AppKit
 import MaxNinesKit
 import SwiftUI
+import SystemConfiguration
 
 /// What the app knows: its settings, and what the server last said.
 @MainActor
@@ -15,17 +16,26 @@ final class Store: ObservableObject {
     @Published var actionProblem: String?
     @Published private(set) var address: String
     @Published private(set) var interval: Int
-    /// Whether a key is saved. Kept here, as asking the Keychain on every
-    /// keystroke in Settings is slow.
-    @Published private(set) var hasAPIKey: Bool
+    /// Who's signed in, and as what, while the app is.
+    @Published private(set) var account: Account?
+    /// Whether it's waiting for the person to sign in in the browser.
+    @Published private(set) var signingIn = false
+    /// Why the last sign in or sign out didn't go as it should.
+    @Published var signInProblem: String?
 
     private var client: Client?
+    private var tokens: TokenHolder?
+    private var signingInTask: Task<Void, Never>?
+    /// Counts each sign in started, so one that's been cancelled or started
+    /// again doesn't say it's finished.
+    private var signIns = 0
     private var polling: Task<Void, Never>?
     /// The alerts the server listed last time, which notifications are worked
     /// out against. Nothing until the first answer, so what was already firing
     /// isn't announced.
     private var lastAlerts: Alerts?
-    /// Counts each change of settings, so an answer to the old ones is dropped.
+    /// Counts each sign in, sign out and change of settings, so an answer to the
+    /// old ones is dropped.
     private var connection = 0
     /// Counts each time the server is asked, and which of those answers was used
     /// last, so an answer overtaken by a later one is dropped. Several can be
@@ -34,9 +44,17 @@ final class Store: ObservableObject {
     private var answered = 0
     let notifier = Notifier()
 
+    struct Account: Equatable {
+        /// Their email address.
+        let user: String
+        let role: String
+    }
+
     static let intervals = [15, 30, 60]
     private static let addressKey = "serverAddress"
     private static let intervalKey = "checkEverySecs"
+    private static let userKey = "signedInUser"
+    private static let roleKey = "signedInRole"
     static let notifyCriticalKey = "notifyCritical"
     static let notifyWarningsKey = "notifyWarnings"
     static let notifyResolvedKey = "notifyResolved"
@@ -51,8 +69,6 @@ final class Store: ObservableObject {
         address = defaults.string(forKey: Store.addressKey) ?? ""
         let saved = defaults.integer(forKey: Store.intervalKey)
         interval = Store.intervals.contains(saved) ? saved : Store.intervals[0]
-        let apiKey = Keychain.apiKey() ?? ""
-        hasAPIKey = !apiKey.isEmpty
         notifier.onAcknowledge = { [weak self] alert in
             // Acknowledged from a notification, so a notification says if it didn't
             // work: the menu, where it would otherwise show, may never be opened.
@@ -68,14 +84,26 @@ final class Store: ObservableObject {
         }
         notifier.onOpen = { [weak self] path in self?.open(path) }
         notifier.start(asking: notifyWhen.any)
-        connect(apiKey: apiKey)
+        if let refreshToken = Keychain.refreshToken(), let server = try? ServerAddress(address) {
+            if let user = defaults.string(forKey: Store.userKey), let role = defaults.string(forKey: Store.roleKey) {
+                account = Account(user: user, role: role)
+            }
+            connect(server) { endpoints, save in
+                TokenHolder(refreshToken: refreshToken, endpoints: endpoints, save: save)
+            }
+        }
     }
 
     var isSetUp: Bool { client != nil }
 
+    /// Whether the sign in ran out or was revoked, rather than never having been.
+    var wasSignedOut: Bool {
+        !isSetUp && problem == ClientError.signedOut.localizedDescription
+    }
+
     var headline: String {
         if !isSetUp {
-            return "Not set up"
+            return wasSignedOut ? "Signed out" : "Not set up"
         }
         return overview?.headline ?? (problem == nil ? "Checking" : "Can't reach the server")
     }
@@ -88,40 +116,123 @@ final class Store: ObservableObject {
             resolved: defaults.bool(forKey: Store.notifyResolvedKey))
     }
 
-    /// Saves the settings and starts again with them. An empty key keeps the one
-    /// that's saved.
-    func save(address: String, apiKey: String, interval: Int) {
-        let defaults = UserDefaults.standard
-        self.address = address.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// How often the server is asked. Applies from the next time it's asked.
+    func setInterval(_ interval: Int) {
         self.interval = interval
-        defaults.set(self.address, forKey: Store.addressKey)
-        defaults.set(interval, forKey: Store.intervalKey)
-        if !apiKey.isEmpty {
-            Keychain.setAPIKey(apiKey)
-        }
-        let saved = Keychain.apiKey() ?? ""
-        hasAPIKey = !saved.isEmpty
-        overview = nil
-        updated = nil
-        connect(apiKey: saved)
+        UserDefaults.standard.set(interval, forKey: Store.intervalKey)
     }
 
-    private func connect(apiKey: String) {
+    /// Opens the server's sign in page in the browser and waits for the person to
+    /// approve the app there.
+    func signIn(address typed: String) {
+        let server: ServerAddress
+        do {
+            server = try ServerAddress(typed)
+        } catch {
+            signInProblem = error.localizedDescription
+            return
+        }
+        signingInTask?.cancel()
+        signInProblem = nil
+        signingIn = true
+        signIns += 1
+        let attempt = signIns
+        signingInTask = Task {
+            defer {
+                if signIns == attempt {
+                    signingIn = false
+                }
+            }
+            do {
+                let tokens = try await signInThroughBrowser(
+                    server: server, device: Store.computerName,
+                    open: { url in await MainActor.run { _ = NSWorkspace.shared.open(url) } })
+                guard signIns == attempt else { return }
+                // Kept before anything uses it.
+                Keychain.setRefreshToken(tokens.refreshToken)
+                Keychain.forgetAPIKey()
+                address = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+                UserDefaults.standard.set(address, forKey: Store.addressKey)
+                signedIn(as: tokens)
+                connect(server) { endpoints, save in
+                    TokenHolder(tokens: tokens, endpoints: endpoints, save: save)
+                }
+            } catch {
+                guard !isCancellation(error) else { return }
+                signInProblem = error.localizedDescription
+            }
+        }
+    }
+
+    func cancelSignIn() {
+        signingInTask?.cancel()
+        signingInTask = nil
+        signIns += 1
+        signingIn = false
+    }
+
+    /// The Mac's name, as set in System Settings under Sharing.
+    private static var computerName: String {
+        SCDynamicStoreCopyComputerName(nil, nil) as String? ?? "Mac"
+    }
+
+    /// Signs out here and on the server. If the server can't be told, it's still
+    /// signed out here, and the person is told to revoke it on the server.
+    func signOut() {
+        let tokens = self.tokens
+        disconnect()
+        signedIn(as: nil)
+        Keychain.setRefreshToken(nil)
+        signInProblem = nil
+        Task {
+            do {
+                try await tokens?.signOut()
+            } catch {
+                signInProblem =
+                    "Signed out here, but the server couldn't be told. Revoke it in MaxNines under Settings, then Signed-in apps."
+            }
+        }
+    }
+
+    private func signedIn(as tokens: Tokens?) {
+        account = tokens.map { Account(user: $0.user, role: $0.role) }
+        let defaults = UserDefaults.standard
+        defaults.set(tokens?.user, forKey: Store.userKey)
+        defaults.set(tokens?.role, forKey: Store.roleKey)
+    }
+
+    /// Stops asking the server, and forgets what it said.
+    private func disconnect() {
         polling?.cancel()
         problem = nil
+        overview = nil
+        updated = nil
         // Another server's alerts aren't news about this one's.
         lastAlerts = nil
         connection += 1
         client = nil
-        if !apiKey.isEmpty && !address.isEmpty {
-            do {
-                client = try Client(address: address, apiKey: apiKey)
-            } catch {
-                // Saying why beats just saying it isn't set up.
-                problem = error.localizedDescription
+        tokens = nil
+    }
+
+    /// Starts asking `server`, with tokens from `holder`.
+    private func connect(
+        _ server: ServerAddress,
+        holder: (SignInEndpoints, @escaping @Sendable (Tokens?) -> Void) -> TokenHolder
+    ) {
+        disconnect()
+        let connected = connection
+        // Each refresh token is kept as soon as it comes, and who's signed in kept
+        // up to date, unless this sign in has since ended.
+        let save: @Sendable (Tokens?) -> Void = { [weak self] tokens in
+            Keychain.setRefreshToken(tokens?.refreshToken)
+            Task { @MainActor in
+                guard let self, self.connection == connected else { return }
+                self.signedIn(as: tokens)
             }
         }
-        guard client != nil else { return }
+        let tokens = holder(SignInEndpoints(server: server), save)
+        self.tokens = tokens
+        client = Client(server: server, tokens: tokens)
         polling = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.refresh()
@@ -142,7 +253,7 @@ final class Store: ObservableObject {
             async let alertsAsked = client.alerts()
             async let hostsAsked = client.hosts()
             // Checks and silences are extras: a server too old to list them, or
-            // a key not allowed to, still shows its alerts.
+            // a sign in not allowed to, still shows its alerts.
             async let checksAsked = try? client.remoteChecks()
             async let silencesAsked = try? client.silences()
             let (alerts, hosts) = try await (alertsAsked, hostsAsked)
@@ -163,22 +274,19 @@ final class Store: ObservableObject {
             // answer, it says nothing about the server now.
             guard current(), !Task.isCancelled, !isCancellation(error) else { return }
             answered = ask
-            problem = error.localizedDescription
+            if error as? ClientError == .signedOut {
+                signedOut()
+            } else {
+                problem = error.localizedDescription
+            }
         }
     }
 
-    /// Tries settings without saving them, and says how it went.
-    func test(address: String, apiKey: String) async -> Result<String, ClientError> {
-        let key = apiKey.isEmpty ? Keychain.apiKey() ?? "" : apiKey
-        do {
-            let client = try Client(address: address, apiKey: key)
-            let hosts = try await client.hosts().filter(\.isCounted)
-            return .success("Connected. It has \(hosts.count) \(hosts.count == 1 ? "host" : "hosts").")
-        } catch let error as ClientError {
-            return .failure(error)
-        } catch {
-            return .failure(.notMaxNines)
-        }
+    /// The sign in ran out or was revoked: stop asking, and say to sign in again.
+    private func signedOut() {
+        disconnect()
+        signedIn(as: nil)
+        problem = ClientError.signedOut.localizedDescription
     }
 
     func acknowledge(_ alert: ServerAlert) {
@@ -196,6 +304,7 @@ final class Store: ObservableObject {
             failed?("MaxNines isn't set up")
             return
         }
+        let asked = connection
         Task {
             do {
                 try await action(client)
@@ -203,6 +312,10 @@ final class Store: ObservableObject {
             } catch {
                 actionProblem = error.localizedDescription
                 failed?(error.localizedDescription)
+                if error as? ClientError == .signedOut, connection == asked {
+                    signedOut()
+                    return
+                }
             }
             await refresh()
         }

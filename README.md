@@ -5,10 +5,20 @@ alerts that are firing on your MaxNines server and links to its web interface.
 
 ## Setting it up
 
-1. In MaxNines, open **Settings** and make an API key. A viewer key shows alerts. A
-   responder key can also acknowledge and silence them.
-2. Open the app's settings from its menu bar icon and enter your server's address and
-   the key. The key is kept in your Keychain.
+1. Open the app's settings from its menu bar icon, enter your server's address, and
+   choose **Sign in with browser**.
+2. Your browser opens MaxNines. Sign in there if you aren't already, choose the role
+   the app gets, and choose **Allow**. A viewer sees alerts. A responder can also
+   acknowledge and silence them, which is what the app asks for. You can't give it
+   more than your own role.
+3. The browser says you're signed in, and the app's settings say who as. You can close
+   the tab.
+
+The app stays signed in for up to 90 days after it was last used, and keeps what it
+needs for that in your Keychain. To sign it out, choose **Sign out** in its settings.
+In MaxNines, **Settings**, then **Signed-in apps**, lists it with the Mac's name, and
+you can revoke it there too. If it's revoked or runs out, the app says so, and you sign
+in again from its settings.
 
 ## What it shows
 
@@ -31,8 +41,8 @@ never send one, as everywhere else in MaxNines, and one still firing when its si
 ends sends one then. Nothing that was already firing when the app started is
 announced, and more than three at once arrive as one.
 
-A notification about an alert that's started has Acknowledge, which needs a responder
-key, and Open in MaxNines.
+A notification about an alert that's started has Acknowledge, which needs the
+responder role, and Open in MaxNines.
 
 ## Open at login
 
@@ -54,4 +64,4 @@ was built from, ending in `-dirty` if there were uncommitted changes, and when i
 built.
 
 A server reached over plain `http` has to be on your local network, as macOS won't let
-the app send the key unencrypted any further.
+the app send its sign in unencrypted any further.

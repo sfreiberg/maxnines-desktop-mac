@@ -5,58 +5,22 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var store: Store
     @State private var address = ""
-    @State private var apiKey = ""
-    @State private var interval = Store.intervals[0]
-    @State private var result: Result<String, ClientError>?
-    @State private var testing = false
 
     var body: some View {
         Form {
             Section("Server") {
-                TextField("Address", text: $address, prompt: Text("https://monitor.example.com"))
-                    .textContentType(.URL)
-                    .autocorrectionDisabled()
-                SecureField(
-                    "API key", text: $apiKey,
-                    prompt: Text(store.hasAPIKey ? "Leave empty to keep the one that's saved" : "From Settings in MaxNines"))
-                Text(
-                    "Kept in your Keychain. A viewer key shows alerts. A responder key can also acknowledge and silence them."
-                )
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                if let addressProblem {
-                    Text(addressProblem).font(.callout).foregroundStyle(.red)
-                } else if sendsKeyInTheClear {
-                    Text("Over plain http the key crosses the network unencrypted, so only use it on a network you trust.")
-                        .font(.callout)
-                        .foregroundStyle(.orange)
+                if store.isSetUp {
+                    signedIn(store.account)
+                } else {
+                    signIn
                 }
-                HStack(spacing: 12) {
-                    Button("Test connection") { test() }
-                        .disabled(testing || !canUse)
-                    if testing {
-                        ProgressView().controlSize(.small)
-                    }
-                    switch result {
-                    case .success(let message): Label(message, systemImage: "checkmark").foregroundStyle(.green)
-                    case .failure(let error):
-                        Label(error.localizedDescription, systemImage: "xmark").foregroundStyle(.red)
-                    case nil: EmptyView()
-                    }
+                if let problem = store.signInProblem {
+                    Text(problem).font(.callout).foregroundStyle(.red)
                 }
-                Picker("Check every", selection: $interval) {
+                Picker("Check every", selection: Binding(get: { store.interval }, set: store.setInterval)) {
                     ForEach(Store.intervals, id: \.self) { seconds in
                         Text(seconds < 60 ? "\(seconds) seconds" : "1 minute").tag(seconds)
                     }
-                }
-                HStack {
-                    Spacer()
-                    Button("Save") {
-                        store.save(address: address, apiKey: apiKey, interval: interval)
-                        apiKey = ""
-                    }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!canUse)
                 }
             }
             NotificationSettings(notifier: store.notifier)
@@ -73,37 +37,82 @@ struct SettingsView: View {
         .fixedSize(horizontal: false, vertical: true)
         .onAppear {
             address = store.address
-            interval = store.interval
         }
+    }
+
+    private func signedIn(_ account: Store.Account?) -> some View {
+        Group {
+            LabeledContent("Address", value: store.address)
+            HStack(spacing: 12) {
+                Text(account.map { "Signed in as \($0.user) (\($0.role))" } ?? "Signed in")
+                Spacer(minLength: 0)
+                Button("Sign out") { store.signOut() }
+            }
+            if account?.role == "viewer" {
+                Text("A viewer can't acknowledge or silence alerts. To do that, sign out, then sign in again and choose responder.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            if (try? ServerAddress(store.address))?.isInTheClear == true {
+                inTheClear
+            }
+        }
+    }
+
+    private var signIn: some View {
+        Group {
+            TextField("Address", text: $address, prompt: Text("https://monitor.example.com"))
+                .textContentType(.URL)
+                .autocorrectionDisabled()
+                .disabled(store.signingIn)
+            if store.wasSignedOut {
+                Text("The app's sign in ran out or was revoked. Sign in again to see alerts.")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+            }
+            if let addressProblem {
+                Text(addressProblem).font(.callout).foregroundStyle(.red)
+            } else if typed?.isInTheClear == true {
+                inTheClear
+            }
+            HStack(spacing: 12) {
+                if store.signingIn {
+                    ProgressView().controlSize(.small)
+                    Text("Waiting for you to sign in in the browser")
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    Button("Cancel") { store.cancelSignIn() }
+                } else {
+                    Text("Your browser opens MaxNines for you to allow the app.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    Button("Sign in with browser") { store.signIn(address: address) }
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(typed == nil)
+                }
+            }
+        }
+    }
+
+    private var inTheClear: some View {
+        Text("Over plain http the sign in crosses the network unencrypted, so only use it on a network you trust.")
+            .font(.callout)
+            .foregroundStyle(.orange)
     }
 
     /// What's typed, read the way it will be used, or nil while there's nothing.
-    private var typed: Result<Client, Error>? {
-        address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? nil : Result { try Client(address: address, apiKey: "") }
+    private var read: Result<ServerAddress, Error>? {
+        address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : Result { try ServerAddress(address) }
+    }
+
+    /// The server typed, if it's one that works.
+    private var typed: ServerAddress? {
+        if case .success(let server) = read { server } else { nil }
     }
 
     private var addressProblem: String? {
-        if case .failure(let error) = typed { error.localizedDescription } else { nil }
-    }
-
-    private var sendsKeyInTheClear: Bool {
-        if case .success(let client) = typed { client.sendsKeyInTheClear } else { false }
-    }
-
-    /// Whether there's an address that works and a key, typed or saved.
-    private var canUse: Bool {
-        guard case .success = typed else { return false }
-        return !apiKey.isEmpty || store.hasAPIKey
-    }
-
-    private func test() {
-        testing = true
-        result = nil
-        Task {
-            result = await store.test(address: address, apiKey: apiKey)
-            testing = false
-        }
+        if case .failure(let error) = read { error.localizedDescription } else { nil }
     }
 }
 

@@ -69,7 +69,7 @@ struct PopoverView: View {
 
     /// Where it's looking, and how fresh what it shows is.
     private func status(now: Date) -> String {
-        guard store.isSetUp else { return store.problem ?? "Add your server in Settings" }
+        guard store.isSetUp else { return store.problem ?? "Sign in from Settings" }
         let server = URL(string: store.address)?.host() ?? store.address
         if let problem = store.problem {
             let since = store.updated.map { ", last heard \(age(sinceMs: $0.milliseconds, now: now)) ago" }
@@ -194,7 +194,7 @@ struct PopoverView: View {
 
     private var notSetUp: some View {
         VStack(spacing: 12) {
-            Text("Enter your MaxNines server's address and an API key to see its alerts here.")
+            Text("Sign in to your MaxNines server in Settings to see its alerts here.")
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.muted)
                 .multilineTextAlignment(.center)
