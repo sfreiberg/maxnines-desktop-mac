@@ -63,7 +63,7 @@ final class Store: ObservableObject {
         let defaults = UserDefaults.standard
         defaults.register(defaults: [
             Store.notifyCriticalKey: true,
-            Store.notifyWarningsKey: false,
+            Store.notifyWarningsKey: true,
             Store.notifyResolvedKey: true,
         ])
         address = defaults.string(forKey: Store.addressKey) ?? ""

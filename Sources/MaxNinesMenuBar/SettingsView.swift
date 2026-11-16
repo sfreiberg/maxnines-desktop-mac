@@ -120,7 +120,7 @@ struct SettingsView: View {
 private struct NotificationSettings: View {
     @ObservedObject var notifier: Notifier
     @AppStorage(Store.notifyCriticalKey) private var critical = true
-    @AppStorage(Store.notifyWarningsKey) private var warnings = false
+    @AppStorage(Store.notifyWarningsKey) private var warnings = true
     @AppStorage(Store.notifyResolvedKey) private var resolved = true
 
     var body: some View {
