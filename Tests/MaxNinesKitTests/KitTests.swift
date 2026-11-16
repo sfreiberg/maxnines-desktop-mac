@@ -531,13 +531,42 @@ let testServer = try! ServerAddress("https://monitor.example.com")
     #expect(form(revoke) == ["client_id": "maxnines-menubar", "token": "mxr_1"])
 }
 
-/// A holder for `server`, which keeps what it saves in `saved`.
+/// A holder for `server`, which keeps what it saves in `saved`. It doesn't try a
+/// failed refresh again unless given delays to wait between tries.
 func holder(
-    _ server: FakeServer, saved: Box<[Tokens?]>, refreshToken: String = "mxr_0", clock: Box<Date>? = nil
+    _ server: FakeServer, saved: Box<[Tokens?]>, refreshToken: String = "mxr_0", clock: Box<Date>? = nil,
+    retryDelays: [TimeInterval] = []
 ) -> TokenHolder {
     TokenHolder(
         refreshToken: refreshToken, endpoints: SignInEndpoints(server: testServer, transport: server.transport),
-        save: { tokens in saved.locked { $0.append(tokens) } }, now: { clock?.value ?? Date() })
+        save: { tokens in saved.locked { $0.append(tokens) } }, now: { clock?.value ?? Date() },
+        retryDelays: retryDelays)
+}
+
+@Test func aRefreshWhoseAnswerIsLostIsAskedForAgainStraightAway() async throws {
+    // The server swapped the token, but its answer never arrived, twice.
+    let tries = Box(0)
+    let server = FakeServer { request in
+        #expect(form(request)["refresh_token"] == "mxr_0")
+        let count = tries.locked { $0 += 1; return $0 }
+        if count < 3 {
+            throw URLError(.networkConnectionLost)
+        }
+        return (200, tokensJSON("mxa_1", "mxr_1"))
+    }
+    let saved = Box<[Tokens?]>([])
+    let tokens = holder(server, saved: saved, retryDelays: [0, 0, 0])
+    #expect(try await tokens.accessToken() == "mxa_1")
+    #expect(tries.value == 3)
+    #expect(saved.value.map { $0?.refreshToken } == ["mxr_1"])
+
+    // Out of tries, it gives up for now and keeps the token for next time.
+    let down = FakeServer { _ in throw URLError(.notConnectedToInternet) }
+    let kept = Box<[Tokens?]>([])
+    let failing = holder(down, saved: kept, retryDelays: [0, 0])
+    await #expect(throws: URLError.self) { try await failing.accessToken() }
+    #expect(down.count("/oauth/token") == 3)
+    #expect(kept.value.isEmpty)
 }
 
 @Test func onlyOneRefreshRunsAndEveryoneWaitsForIt() async throws {
@@ -600,7 +629,7 @@ func holder(
     let tokens = TokenHolder(
         tokens: Tokens(accessToken: "mxa_1", expiresIn: 3600, refreshToken: "mxr_1", role: "responder", user: "a"),
         endpoints: SignInEndpoints(server: testServer, transport: server.transport), save: { _ in },
-        now: { clock.value })
+        now: { clock.value }, retryDelays: [])
     #expect(try await tokens.accessToken() == "mxa_1")
     #expect(server.requests.value.isEmpty)
     clock.value += 3600
@@ -673,7 +702,8 @@ func holder(
     }
     let tokens = TokenHolder(
         tokens: Tokens(accessToken: "mxa_old", expiresIn: 3600, refreshToken: "mxr_old", role: "responder", user: "a"),
-        endpoints: SignInEndpoints(server: testServer, transport: server.transport), save: { _ in })
+        endpoints: SignInEndpoints(server: testServer, transport: server.transport), save: { _ in },
+        retryDelays: [])
     let client = Client(server: testServer, tokens: tokens, transport: server.transport)
     // Several turned down at once still refresh only once.
     try await withThrowingTaskGroup(of: Void.self) { group in

@@ -21,12 +21,19 @@ public actor TokenHolder: AccessTokens {
 
     /// How long before the access token runs out that a new one is fetched.
     static let early: TimeInterval = 60
+    /// How long to wait before each new try when a refresh fails for any reason
+    /// but being signed out. They all fall within the minute the server still
+    /// takes a refresh token it has just replaced, so an answer lost on the way
+    /// is asked for again in time, rather than at the next check, when reusing
+    /// the token would get the whole sign in revoked.
+    private let retryDelays: [TimeInterval]
 
     /// Just signed in, with tokens that `save` already has.
     public init(
         tokens: Tokens, endpoints: SignInEndpoints, save: @escaping @Sendable (Tokens?) -> Void,
-        now: @escaping @Sendable () -> Date = { Date() }
+        now: @escaping @Sendable () -> Date = { Date() }, retryDelays: [TimeInterval] = [2, 5, 15]
     ) {
+        self.retryDelays = retryDelays
         self.endpoints = endpoints
         self.save = save
         self.now = now
@@ -38,8 +45,9 @@ public actor TokenHolder: AccessTokens {
     /// refreshes.
     public init(
         refreshToken: String, endpoints: SignInEndpoints, save: @escaping @Sendable (Tokens?) -> Void,
-        now: @escaping @Sendable () -> Date = { Date() }
+        now: @escaping @Sendable () -> Date = { Date() }, retryDelays: [TimeInterval] = [2, 5, 15]
     ) {
+        self.retryDelays = retryDelays
         self.endpoints = endpoints
         self.save = save
         self.now = now
@@ -95,11 +103,26 @@ public actor TokenHolder: AccessTokens {
         return try await task.value
     }
 
+    /// Swaps the refresh token, trying again soon if the answer doesn't come.
+    private func refreshTrying(_ refreshToken: String) async throws -> Tokens {
+        var delays = retryDelays[...]
+        while true {
+            do {
+                return try await endpoints.refresh(refreshToken)
+            } catch ClientError.signedOut {
+                throw ClientError.signedOut
+            } catch {
+                guard let delay = delays.popFirst(), !signingOut else { throw error }
+                try await Task.sleep(for: .seconds(delay))
+            }
+        }
+    }
+
     private func refresh() async throws -> String {
         guard !signingOut, let refreshToken else { throw ClientError.signedOut }
         let tokens: Tokens
         do {
-            tokens = try await endpoints.refresh(refreshToken)
+            tokens = try await refreshTrying(refreshToken)
         } catch ClientError.signedOut {
             // It's run out or been revoked, and won't work again.
             self.refreshToken = nil
