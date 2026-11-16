@@ -214,7 +214,9 @@ public struct SignInEndpoints: Sendable {
     private func send(_ path: String, _ fields: [(String, String)]) async throws -> (Data, Int) {
         var request = URLRequest(url: server.url.appending(path: path))
         request.httpMethod = "POST"
-        request.timeoutInterval = 15
+        // Short, so a refresh that gets no answer can be tried again while the server
+        // still takes the refresh token: see TokenHolder.retryWindow.
+        request.timeoutInterval = 10
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.httpBody = Data(formEncoded(fields).utf8)
         let (data, response) = try await transport(request)

@@ -569,6 +569,19 @@ func holder(
     #expect(kept.value.isEmpty)
 }
 
+@Test func aRefreshIsOnlyTriedAgainWhileTheServerWouldStillTakeIt() async throws {
+    // Each try waited long for its answer, so the next would land past the window.
+    let clock = Box(Date(timeIntervalSince1970: 1_000_000))
+    let slow = FakeServer { _ in
+        clock.value += 40
+        throw URLError(.timedOut)
+    }
+    let tokens = holder(slow, saved: Box([]), clock: clock, retryDelays: [0, 0, 0])
+    await #expect(throws: URLError.self) { try await tokens.accessToken() }
+    // The first at 40s, a second straight after, then 80s: past the window.
+    #expect(slow.count("/oauth/token") == 2)
+}
+
 @Test func onlyOneRefreshRunsAndEveryoneWaitsForIt() async throws {
     let gate = Gate()
     let refreshes = Box(0)
