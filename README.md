@@ -48,5 +48,9 @@ open build/MaxNines.app
 scripts/test.sh          # runs the tests
 ```
 
+The bottom of its settings says exactly which build it is: the version, the commit it
+was built from, ending in `-dirty` if there were uncommitted changes, and when it was
+built.
+
 A server reached over plain `http` has to be on your local network, as macOS won't let
 the app send the key unencrypted any further.

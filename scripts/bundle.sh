@@ -9,7 +9,15 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp .build/release/MaxNinesMenuBar "$app/Contents/MacOS/MaxNines"
 cp Resources/AppIcon.icns "$app/Contents/Resources/"
-cat > "$app/Contents/Info.plist" <<'PLIST'
+# Which build this is, for Settings to show. A copy of the source with no git
+# history still builds, as "unknown".
+if commit=$(git rev-parse HEAD 2>/dev/null); then
+    git diff --quiet HEAD || commit="$commit-dirty"
+else
+    commit=unknown
+fi
+built=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -22,6 +30,8 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>0.1.0</string>
     <key>CFBundleVersion</key><string>1</string>
+    <key>MaxNinesCommit</key><string>$commit</string>
+    <key>MaxNinesBuiltAt</key><string>$built</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSUIElement</key><true/>
     <key>NSAppTransportSecurity</key>

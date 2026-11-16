@@ -59,6 +59,12 @@ struct SettingsView: View {
             }
             NotificationSettings(notifier: store.notifier)
             OpenAtLogin()
+            Section {
+                Text(Build.describe())
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
         }
         .formStyle(.grouped)
         .frame(width: 520)
