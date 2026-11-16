@@ -12,7 +12,7 @@ struct PopoverView: View {
                 header(now: timeline.date)
                 Divider().overlay(Theme.border)
                 if !store.isSetUp {
-                    notSetUp
+                    SignInPanel()
                 } else if let overview = store.overview {
                     counts(overview)
                     Divider().overlay(Theme.border)
@@ -69,7 +69,7 @@ struct PopoverView: View {
 
     /// Where it's looking, and how fresh what it shows is.
     private func status(now: Date) -> String {
-        guard store.isSetUp else { return store.problem ?? "Sign in from Settings" }
+        guard store.isSetUp else { return store.problem ?? "Not signed in" }
         let server = URL(string: store.address)?.host() ?? store.address
         if let problem = store.problem {
             let since = store.updated.map { ", last heard \(age(sinceMs: $0.milliseconds, now: now)) ago" }
@@ -190,19 +190,6 @@ struct PopoverView: View {
             .padding(.horizontal, 16)
             .padding(.top, 12)
             .padding(.bottom, 4)
-    }
-
-    private var notSetUp: some View {
-        VStack(spacing: 12) {
-            Text("Sign in to your MaxNines server in Settings to see its alerts here.")
-                .font(.system(size: 13))
-                .foregroundStyle(Theme.muted)
-                .multilineTextAlignment(.center)
-            SettingsLink { Text("Open Settings") }
-                .buttonStyle(QuietButtonStyle())
-                .simultaneousGesture(TapGesture().onEnded { NSApp.activate(ignoringOtherApps: true) })
-        }
-        .padding(24)
     }
 
     private var waiting: some View {
@@ -392,5 +379,84 @@ private struct ResolvedRow: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
+    }
+}
+
+/// Signing in, right in the menu: a button that opens the browser, with a place for the
+/// server's address the first time, before there's one to sign in to.
+private struct SignInPanel: View {
+    @EnvironmentObject private var store: Store
+    @State private var typed = ""
+    /// Signing in to a server other than the one saved.
+    @State private var another = false
+
+    var body: some View {
+        VStack(spacing: 12) {
+            if store.signingIn {
+                ProgressView().controlSize(.small)
+                Text("Waiting for you to allow it in the browser…")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.muted)
+                Button("Cancel") { store.cancelSignIn() }
+                    .buttonStyle(QuietButtonStyle(filled: false))
+            } else {
+                Text(
+                    store.wasSignedOut
+                        ? "Signed out. Sign in again to see its alerts here."
+                        : "Sign in to your MaxNines server to see its alerts here."
+                )
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.muted)
+                .multilineTextAlignment(.center)
+                if store.address.isEmpty || another {
+                    HStack(spacing: 8) {
+                        TextField("Server address", text: $typed, prompt: Text("https://monitor.example.com"))
+                            .textFieldStyle(.roundedBorder)
+                            .autocorrectionDisabled()
+                            .onSubmit(signInTyped)
+                        Button("Sign in", action: signInTyped)
+                            .buttonStyle(PrimaryButtonStyle())
+                            .disabled(typed.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                    if another {
+                        Button("Back to \(saved)") { another = false }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.accentInk)
+                    }
+                } else {
+                    Button("Sign in to \(saved)") { store.signIn(address: store.address) }
+                        .buttonStyle(PrimaryButtonStyle())
+                    Button("Use another server") {
+                        typed = ""
+                        another = true
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.accentInk)
+                }
+                if let problem = store.signInProblem {
+                    Text(problem)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.bad)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(24)
+    }
+
+    /// The saved server as people know it: its name or address, without the scheme.
+    private var saved: String {
+        URL(string: store.address)?.host() ?? store.address
+    }
+
+    private func signInTyped() {
+        let address = typed.trimmingCharacters(in: .whitespaces)
+        guard !address.isEmpty else { return }
+        another = false
+        store.signIn(address: address)
     }
 }

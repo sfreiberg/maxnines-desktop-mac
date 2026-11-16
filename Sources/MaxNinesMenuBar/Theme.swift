@@ -50,3 +50,21 @@ struct QuietButtonStyle: ButtonStyle {
             .contentShape(RoundedRectangle(cornerRadius: 7))
     }
 }
+
+/// The one thing to do next, in the accent colour.
+struct PrimaryButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(Theme.accentText)
+            .padding(.horizontal, 12)
+            .frame(height: 28)
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(Theme.accent.opacity(isEnabled ? (configuration.isPressed ? 0.8 : 1) : 0.4))
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 7))
+    }
+}
