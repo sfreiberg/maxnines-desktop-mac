@@ -86,6 +86,18 @@ struct PopoverView: View {
             count(
                 "FIRING", "\(overview.firing.count)", path: "/alerts",
                 colour: overview.worst == nil ? Theme.good : overview.worst == .critical ? Theme.bad : Theme.warn)
+            if let checks = overview.checks {
+                Divider().overlay(Theme.border)
+                // Only checks that have run can pass or fail, so until any has
+                // since the server started, there's nothing to count.
+                if checks.run == 0 {
+                    count("CHECKS PASSING", "–", path: "/checks", colour: Theme.muted)
+                } else {
+                    count(
+                        "CHECKS PASSING", "\(checks.passing)", of: checks.run, path: "/checks",
+                        colour: checks.failing > 0 ? Theme.bad : Theme.text)
+                }
+            }
         }
         .fixedSize(horizontal: false, vertical: true)
     }
@@ -148,7 +160,27 @@ struct PopoverView: View {
                 ResolvedRow(alert: alert, now: now)
             }
         }
+        if !overview.silences.isEmpty {
+            Divider().overlay(Theme.border)
+            section("SILENCED")
+            ForEach(overview.silences.prefix(PopoverView.mostSilences)) { silence in
+                SilenceRowView(silence: silence, now: now)
+            }
+            let more = overview.silences.count - PopoverView.mostSilences
+            if more > 0 {
+                Button("\(more) more") { store.open("/alerts/silences") }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.accentInk)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 10)
+            }
+        }
     }
+
+    /// More silences than this are left to the Silences page.
+    static let mostSilences = 3
 
     private func section(_ title: String) -> some View {
         Text(title)
@@ -289,6 +321,41 @@ private struct FiringRow: View {
             parts.append("silenced")
         }
         return parts.joined(separator: " · ")
+    }
+}
+
+/// A silence that's running: why, what it keeps quiet and when it ends.
+private struct SilenceRowView: View {
+    @EnvironmentObject private var store: Store
+    let silence: SilenceRow
+    let now: Date
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "bell.slash")
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.muted)
+                .padding(.top, 2)
+                .accessibilityLabel("Silenced")
+            VStack(alignment: .leading, spacing: 3) {
+                Button {
+                    store.open("/alerts/silences")
+                } label: {
+                    Text(silence.reason)
+                        .font(.system(size: 13))
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .buttonStyle(.plain)
+                Text("\(silence.covers) · ends in \(timeLeft(untilMs: silence.endsMs, now: now))")
+                    .font(Theme.detail)
+                    .foregroundStyle(Theme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
     }
 }
 

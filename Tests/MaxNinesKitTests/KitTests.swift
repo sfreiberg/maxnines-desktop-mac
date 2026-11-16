@@ -149,3 +149,165 @@ let now = Date(timeIntervalSince1970: 1_793_940_300)
     // One about a group of hosts has no host to name, and this one's rule is gone.
     #expect(body(alerts.open[1]) == #"{"duration_secs":3600,"reason":"Silenced from the menu bar"}"#)
 }
+
+// MARK: Checks and silences
+
+let checksJSON = """
+    [
+      {"id": 1, "host_id": "server", "check": {"name": "Home page", "kind": "http", "target": "https://example.com"},
+       "interval_secs": 60, "enabled": true, "read_stats": false, "sign_in": "none",
+       "has_password": false, "has_private_key": false,
+       "latest": {"up": true, "ran_ms": 1793940279545}},
+      {"id": 2, "host_id": "55d0", "check": {"name": "db", "kind": "postgres", "target": "db:5432"},
+       "interval_secs": 60, "enabled": true, "read_stats": true, "extras": ["sizes"], "sign_in": "password",
+       "username": "maxnines", "has_password": true, "has_private_key": false,
+       "latest": {"up": false, "ran_ms": 1793940279545, "error": "connection refused"}},
+      {"id": 3, "host_id": "server", "check": {"name": "New", "kind": "tcp", "target": "a:1"},
+       "interval_secs": 60, "enabled": true, "read_stats": false, "sign_in": "none",
+       "has_password": false, "has_private_key": false, "latest": null},
+      {"id": 4, "host_id": "server", "check": {"name": "Paused", "kind": "tcp", "target": "b:1"},
+       "interval_secs": 60, "enabled": false, "read_stats": false, "sign_in": "none",
+       "has_password": false, "has_private_key": false, "latest": {"up": false, "ran_ms": 1}}
+    ]
+    """
+
+let silencesJSON = """
+    {
+      "active": [
+        {"id": 3, "rule_id": null, "filter": "hostname=db*", "series": "", "reason": "Upgrading Postgres",
+         "created_by": "you@example.com", "starts_ms": 1793940000000, "ends_ms": 1793947479545},
+        {"id": 4, "rule_id": 1, "filter": "id=22ad", "series": "", "reason": "Known",
+         "created_by": "you@example.com", "starts_ms": 1793940000000, "ends_ms": 1793941800000},
+        {"id": 5, "rule_id": 99, "filter": "", "series": "nginx.service", "reason": "Gone rule",
+         "created_by": "you@example.com", "starts_ms": 1793940000000, "ends_ms": 1793950000000},
+        {"id": 6, "rule_id": null, "filter": "", "series": "", "reason": "Everything",
+         "created_by": "you@example.com", "starts_ms": 1793940000000, "ends_ms": 1793960000000}
+      ],
+      "ended": [{"id": 1, "rule_id": null, "filter": "", "series": "", "reason": "Old",
+                 "created_by": "you@example.com", "starts_ms": 1, "ends_ms": 2}]
+    }
+    """
+
+@Test func checksCountOnlyWhatsRunningAndHasRun() throws {
+    let (alerts, hosts) = try decoded()
+    let checks = try Client.decoder.decode([RemoteCheck].self, from: Data(checksJSON.utf8))
+    let overview = Overview(alerts: alerts, hosts: hosts, checks: checks, now: now)
+    // The paused one isn't counted, and the one that hasn't run can't pass or fail.
+    let counted = try #require(overview.checks)
+    #expect((counted.passing, counted.run, counted.enabled, counted.failing) == (1, 2, 3, 1))
+
+    // A server with none, or one that couldn't say, has nothing to show.
+    #expect(Overview(alerts: alerts, hosts: hosts, checks: [], now: now).checks == nil)
+    #expect(Overview(alerts: alerts, hosts: hosts, checks: nil, now: now).checks == nil)
+    let paused = checks.filter { !$0.enabled }
+    #expect(Overview(alerts: alerts, hosts: hosts, checks: paused, now: now).checks == nil)
+}
+
+@Test func checksFromAServerTooOldToSayHaveNotRun() throws {
+    let old = """
+        [{"id": 1, "host_id": "server", "check": {"name": "a", "kind": "tcp", "target": "a:1"},
+          "interval_secs": 60, "enabled": true}]
+        """
+    let checks = try Client.decoder.decode([RemoteCheck].self, from: Data(old.utf8))
+    let (alerts, hosts) = try decoded()
+    #expect(Overview(alerts: alerts, hosts: hosts, checks: checks, now: now).checks?.run == 0)
+}
+
+@Test func silencesSayWhatTheyCoverAndEndSoonestFirst() throws {
+    let (alerts, hosts) = try decoded()
+    let silences = try Client.decoder.decode(Silences.self, from: Data(silencesJSON.utf8)).active
+    let overview = Overview(alerts: alerts, hosts: hosts, silences: silences, now: now)
+    #expect(overview.silences.map(\.id) == [4, 3, 5, 6])
+    #expect(overview.silences.map(\.covers) == [
+        // A rule named by one of its alerts, on a host named by its ID.
+        "High CPU on web-1",
+        "Everything on hostname=db*",
+        // A rule with no alert to name it.
+        "One alert rule nginx.service on every host",
+        "Every alert",
+    ])
+    #expect(overview.silences[0].reason == "Known")
+}
+
+@Test func timeLeftRoundsUpAndNeverGoesNegative() {
+    let left = { (seconds: Int64) in timeLeft(untilMs: now.milliseconds + seconds * 1000, now: now) }
+    #expect(left(25 * 60) == "25m")
+    #expect(left(90) == "1m")
+    #expect(left(3 * 3600) == "3h")
+    #expect(left(-10) == "0s")
+    #expect(timeLeft(untilMs: now.milliseconds + 1, now: now) == "1s")
+}
+
+// MARK: Notifications
+
+func alert(
+    _ id: Int, _ severity: Severity, silenced: Bool = false, acknowledged: Bool = false,
+    resolvedMs: Int64? = nil
+) -> ServerAlert {
+    let json = """
+        {"id": \(id), "rule_id": 1, "rule_name": "Rule \(id)", "severity": "\(severity.rawValue)",
+         "host_id": "h\(id)", "hostname": "host-\(id)", "summary": "Alert \(id)",
+         "started_ms": 1793940000000, "resolved_ms": \(resolvedMs.map(String.init) ?? "null"),
+         "acknowledged_by": \(acknowledged ? "\"sam@example.com\"" : "null"),
+         "silence_id": \(silenced ? "1" : "null"), "maintenance_window_id": null}
+        """
+    return try! Client.decoder.decode(ServerAlert.self, from: Data(json.utf8))
+}
+
+let everything = NotifyWhen(critical: true, warnings: true, resolved: true)
+
+@Test func newAlertsAreNotifiedAsWanted() {
+    let old = Alerts(open: [alert(1, .critical)], resolved: [])
+    let new = Alerts(
+        open: [alert(1, .critical), alert(2, .critical), alert(3, .warning), alert(4, .critical, silenced: true)],
+        resolved: [])
+    let all = notices(from: old, to: new, when: everything, now: now)
+    // Not the one already firing, nor the silenced one.
+    #expect(all.map(\.title) == ["Critical: Rule 2", "Warning: Rule 3"])
+    #expect(all[0].body == "Alert 2")
+    #expect(all[0].acknowledges == 2)
+    #expect(all[0].path == "/hosts/h2")
+
+    let criticalOnly = NotifyWhen(critical: true, warnings: false, resolved: false)
+    #expect(notices(from: old, to: new, when: criticalOnly, now: now).map(\.title) == ["Critical: Rule 2"])
+    #expect(notices(from: old, to: new, when: NotifyWhen(critical: false, warnings: false, resolved: false)).isEmpty)
+}
+
+@Test func anAlertThatGetsWorseIsNotified() {
+    let old = Alerts(open: [alert(1, .warning)], resolved: [])
+    let new = Alerts(open: [alert(1, .critical, acknowledged: true)], resolved: [])
+    let all = notices(from: old, to: new, when: everything, now: now)
+    #expect(all.map(\.title) == ["Now critical: Rule 1"])
+    // Someone's already on it.
+    #expect(all[0].acknowledges == nil)
+    // Getting better isn't news.
+    #expect(notices(from: new, to: old, when: everything, now: now).isEmpty)
+}
+
+@Test func resolvedAlertsSayHowLongTheyLasted() {
+    let old = Alerts(open: [alert(1, .critical), alert(2, .warning), alert(3, .critical, silenced: true)], resolved: [])
+    let new = Alerts(
+        open: [],
+        resolved: [alert(1, .critical, resolvedMs: 1793940180000), alert(3, .critical, resolvedMs: 1793940180000)])
+    let all = notices(from: old, to: new, when: everything, now: now)
+    // The second just went, which the server doesn't call resolved, and the
+    // third was silenced.
+    #expect(all.map(\.title) == ["Resolved: Rule 1"])
+    #expect(all[0].body == "Alert 1\nLasted 3m")
+    #expect(all[0].acknowledges == nil)
+    #expect(notices(from: old, to: new, when: NotifyWhen(critical: true, warnings: true, resolved: false)).isEmpty)
+}
+
+@Test func aStormBecomesOneNotification() {
+    let old = Alerts(open: [], resolved: [])
+    let new = Alerts(open: (1...5).map { alert($0, .critical) }, resolved: [])
+    let all = notices(from: old, to: new, when: everything, now: now)
+    #expect(all.count == 1)
+    #expect(all[0].title == "5 alerts started")
+    #expect(all[0].body == "Alert 1\nAlert 2\nAlert 3\nand 2 more")
+    #expect(all[0].path == "/alerts")
+    #expect(all[0].acknowledges == nil)
+    // Three at once are each shown.
+    let three = Alerts(open: (1...3).map { alert($0, .critical) }, resolved: [])
+    #expect(notices(from: old, to: three, when: everything, now: now).count == 3)
+}

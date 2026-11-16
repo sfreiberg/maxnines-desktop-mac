@@ -105,9 +105,17 @@ public struct Client: Sendable {
         try await get("hosts")
     }
 
+    public func silences() async throws -> Silences {
+        try await get("silences")
+    }
+
+    public func remoteChecks() async throws -> [RemoteCheck] {
+        try await get("remote-checks")
+    }
+
     /// Says the key's owner is dealing with an alert.
-    public func acknowledge(_ alert: ServerAlert) async throws {
-        _ = try await send(request("POST", "alerts/\(alert.id)/acknowledge"))
+    public func acknowledge(alertID: Int) async throws {
+        _ = try await send(request("POST", "alerts/\(alertID)/acknowledge"))
     }
 
     /// Keeps an alert's notifications back for a while.

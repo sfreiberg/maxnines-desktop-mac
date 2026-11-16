@@ -18,16 +18,36 @@ final class Store: ObservableObject {
 
     private var client: Client?
     private var polling: Task<Void, Never>?
+    /// The alerts the server listed last time, which notifications are worked
+    /// out against. Nothing until the first answer, so what was already firing
+    /// isn't announced.
+    private var lastAlerts: Alerts?
+    /// Counts each change of settings, so an answer to the old ones is dropped.
+    private var connection = 0
+    let notifier = Notifier()
 
     static let intervals = [15, 30, 60]
     private static let addressKey = "serverAddress"
     private static let intervalKey = "checkEverySecs"
+    static let notifyCriticalKey = "notifyCritical"
+    static let notifyWarningsKey = "notifyWarnings"
+    static let notifyResolvedKey = "notifyResolved"
 
     init() {
         let defaults = UserDefaults.standard
+        defaults.register(defaults: [
+            Store.notifyCriticalKey: true,
+            Store.notifyWarningsKey: false,
+            Store.notifyResolvedKey: true,
+        ])
         address = defaults.string(forKey: Store.addressKey) ?? ""
         let saved = defaults.integer(forKey: Store.intervalKey)
         interval = Store.intervals.contains(saved) ? saved : Store.intervals[0]
+        notifier.onAcknowledge = { [weak self] alert in
+            self?.act { try await $0.acknowledge(alertID: alert) }
+        }
+        notifier.onOpen = { [weak self] path in self?.open(path) }
+        notifier.start(asking: notifyWhen.any)
         connect(apiKey: Keychain.apiKey() ?? "")
     }
 
@@ -40,6 +60,14 @@ final class Store: ObservableObject {
             return "Not set up"
         }
         return overview?.headline ?? (problem == nil ? "Checking" : "Can't reach the server")
+    }
+
+    var notifyWhen: NotifyWhen {
+        let defaults = UserDefaults.standard
+        return NotifyWhen(
+            critical: defaults.bool(forKey: Store.notifyCriticalKey),
+            warnings: defaults.bool(forKey: Store.notifyWarningsKey),
+            resolved: defaults.bool(forKey: Store.notifyResolvedKey))
     }
 
     /// Saves the settings and starts again with them. An empty key keeps the one
@@ -61,6 +89,9 @@ final class Store: ObservableObject {
     private func connect(apiKey: String) {
         polling?.cancel()
         problem = nil
+        // Another server's alerts aren't news about this one's.
+        lastAlerts = nil
+        connection += 1
         client = apiKey.isEmpty ? nil : try? Client(address: address, apiKey: apiKey)
         guard client != nil else { return }
         polling = Task { [weak self] in
@@ -74,12 +105,27 @@ final class Store: ObservableObject {
 
     func refresh() async {
         guard let client else { return }
+        let asked = connection
         do {
-            async let alerts = client.alerts()
-            async let hosts = client.hosts()
-            overview = try await Overview(alerts: alerts, hosts: hosts)
+            async let alertsAsked = client.alerts()
+            async let hostsAsked = client.hosts()
+            // Checks and silences are extras: a server too old to list them, or
+            // a key not allowed to, still shows its alerts.
+            async let checksAsked = try? client.remoteChecks()
+            async let silencesAsked = try? client.silences()
+            let (alerts, hosts) = try await (alertsAsked, hostsAsked)
+            let (checks, silences) = await (checksAsked, silencesAsked)
+            // The settings changed while it was asking.
+            guard connection == asked else { return }
+            overview = Overview(alerts: alerts, hosts: hosts, checks: checks, silences: silences?.active ?? [])
             updated = Date()
             problem = nil
+            if let lastAlerts {
+                for notice in notices(from: lastAlerts, to: alerts, when: notifyWhen) {
+                    notifier.post(notice)
+                }
+            }
+            lastAlerts = alerts
         } catch is CancellationError {
         } catch {
             problem = error.localizedDescription
@@ -101,7 +147,7 @@ final class Store: ObservableObject {
     }
 
     func acknowledge(_ alert: ServerAlert) {
-        act { try await $0.acknowledge(alert) }
+        act { try await $0.acknowledge(alertID: alert.id) }
     }
 
     func silenceForAnHour(_ alert: ServerAlert) {

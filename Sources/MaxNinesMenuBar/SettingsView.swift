@@ -1,4 +1,5 @@
 import MaxNinesKit
+import ServiceManagement
 import SwiftUI
 
 struct SettingsView: View {
@@ -41,23 +42,23 @@ struct SettingsView: View {
                     case nil: EmptyView()
                     }
                 }
-            }
-            Section {
                 Picker("Check every", selection: $interval) {
                     ForEach(Store.intervals, id: \.self) { seconds in
                         Text(seconds < 60 ? "\(seconds) seconds" : "1 minute").tag(seconds)
                     }
                 }
-            }
-            HStack {
-                Spacer()
-                Button("Save") {
-                    store.save(address: address, apiKey: apiKey, interval: interval)
-                    apiKey = ""
+                HStack {
+                    Spacer()
+                    Button("Save") {
+                        store.save(address: address, apiKey: apiKey, interval: interval)
+                        apiKey = ""
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(address.isEmpty || (apiKey.isEmpty && !store.hasAPIKey))
                 }
-                .keyboardShortcut(.defaultAction)
-                .disabled(address.isEmpty || (apiKey.isEmpty && !store.hasAPIKey))
             }
+            NotificationSettings(notifier: store.notifier)
+            OpenAtLogin()
         }
         .formStyle(.grouped)
         .frame(width: 520)
@@ -75,5 +76,82 @@ struct SettingsView: View {
             result = await store.test(address: address, apiKey: apiKey)
             testing = false
         }
+    }
+}
+
+/// When to be told about alerts. These apply as soon as they're changed.
+private struct NotificationSettings: View {
+    @ObservedObject var notifier: Notifier
+    @AppStorage(Store.notifyCriticalKey) private var critical = true
+    @AppStorage(Store.notifyWarningsKey) private var warnings = false
+    @AppStorage(Store.notifyResolvedKey) private var resolved = true
+
+    var body: some View {
+        Section("Notifications") {
+            Toggle("When a critical alert starts", isOn: $critical)
+            Toggle("When a warning starts", isOn: $warnings)
+            Toggle("When an alert resolves", isOn: $resolved)
+            Text("Silenced alerts never send one.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            if notifier.allowed == false && (critical || warnings || resolved) {
+                HStack(spacing: 12) {
+                    Text("macOS has notifications from MaxNines turned off.")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                    Spacer(minLength: 0)
+                    Button("Notification Settings…") {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                }
+            }
+        }
+        .onChange(of: critical || warnings || resolved) { _, wanted in
+            if wanted {
+                notifier.ask()
+            }
+        }
+    }
+}
+
+/// Starting with the Mac, through macOS's own list of login items.
+private struct OpenAtLogin: View {
+    @State private var status = SMAppService.mainApp.status
+    @State private var problem: String?
+
+    var body: some View {
+        Section {
+            Toggle("Open at login", isOn: Binding(get: { status == .enabled }, set: change))
+            if status == .requiresApproval {
+                HStack(spacing: 12) {
+                    Text("macOS needs you to allow it in Login Items.")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                    Spacer(minLength: 0)
+                    Button("Login Items…") { SMAppService.openSystemSettingsLoginItems() }
+                }
+            }
+            if let problem {
+                Text(problem).font(.callout).foregroundStyle(.red)
+            }
+        }
+        // It can be changed in System Settings while this window is closed.
+        .onAppear { status = SMAppService.mainApp.status }
+    }
+
+    private func change(_ wanted: Bool) {
+        do {
+            if wanted {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+            problem = nil
+        } catch {
+            problem = "macOS wouldn't change it: \(error.localizedDescription)"
+        }
+        status = SMAppService.mainApp.status
     }
 }
