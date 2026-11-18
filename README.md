@@ -1,7 +1,8 @@
-# MaxNines Menu Bar
+# MaxNines Desktop for Mac
 
 A Mac menu bar app for [MaxNines](https://github.com/sfreiberg/maxnines). It shows the
-alerts that are firing on your MaxNines server and links to its web interface.
+alerts that are firing on your MaxNines server and links to its web interface. It's
+the Mac version of MaxNines Desktop for Windows, and does the same things.
 
 ## Setting it up
 
@@ -15,9 +16,10 @@ alerts that are firing on your MaxNines server and links to its web interface.
 
 The app stays signed in for up to 90 days after it was last used, and keeps what it
 needs for that in your Keychain. To sign it out, choose **Sign out** in its settings.
-In MaxNines, **Settings**, then **Signed-in apps**, lists it with the Mac's name, and
-you can revoke it there too. If it's revoked or runs out, the menu says so, with a
-button to sign in again. To use another server, sign out in its settings first.
+In MaxNines, **Settings**, then **Signed-in apps**, lists it as MaxNines Desktop for
+Mac, with the Mac's name, and you can revoke it there too. If it's revoked or runs
+out, the menu says so, with a button to sign in again. To use another server, sign
+out in its settings first.
 
 ## What it shows
 
@@ -57,9 +59,9 @@ remembers where it was when you turned it on.
 It needs macOS 14 or later and Swift 6.
 
 ```sh
-scripts/bundle.sh        # builds it and makes build/MaxNines.app
-open build/MaxNines.app
-scripts/test.sh          # runs the tests
+scripts/bundle.sh                 # builds it and makes build/MaxNines Desktop.app
+open "build/MaxNines Desktop.app"
+scripts/test.sh                   # runs the tests
 ```
 
 The bottom of its settings says exactly which build it is: the version, the commit it
