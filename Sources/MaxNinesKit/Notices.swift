@@ -50,6 +50,7 @@ public func notices(from old: Alerts, to new: Alerts, when: NotifyWhen, now: Dat
     let still = Set(new.open.map(\.id))
 
     var started: [Notice] = []
+    var worst = Severity.warning
     for alert in new.open where !alert.isSilenced {
         let was = before[alert.id]
         // A new alert, one whose silence ended while it was still firing, as the
@@ -59,10 +60,11 @@ public func notices(from old: Alerts, to new: Alerts, when: NotifyWhen, now: Dat
         guard was == nil || unsilenced || worse else { continue }
         guard alert.severity == .critical ? when.critical : when.warnings else { continue }
         let level = alert.severity == .critical ? "Critical" : "Warning"
+        worst = max(worst, alert.severity)
         started.append(
             Notice(
                 id: "alert-\(alert.id)-\(alert.severity.rawValue)",
-                title: "\(was == nil || unsilenced ? level : "Now critical"): \(alert.ruleName)",
+                title: "\(mark(alert.severity)) \(was == nil || unsilenced ? level : "Now critical"): \(alert.ruleName)",
                 body: alert.summary,
                 acknowledges: alert.isAcknowledged ? nil : alert.id,
                 path: page(alert)))
@@ -76,28 +78,40 @@ public func notices(from old: Alerts, to new: Alerts, when: NotifyWhen, now: Dat
             // when its host was deleted, isn't news worth telling.
             guard let done = resolved[alert.id] else { continue }
             let lasted = age(sinceMs: done.startedMs, now: Date(milliseconds: done.resolvedMs ?? now.milliseconds))
+            // Where things stand now, so it doesn't read as the problem again. One
+            // closed for another reason has only what was wrong, said as past.
+            let outcome = done.resolvedSummary ?? "Was: \(done.summary)"
             ended.append(
                 Notice(
                     id: "alert-\(alert.id)-resolved",
-                    title: "Resolved: \(alert.ruleName)",
-                    body: "\(alert.summary)\nLasted \(lasted)",
+                    title: "\(resolvedMark) Resolved: \(alert.ruleName)",
+                    body: "\(outcome)\nLasted \(lasted)",
                     acknowledges: nil,
                     path: page(alert)))
         }
     }
 
-    return gathered(started, "alerts started") + gathered(ended, "alerts resolved")
+    return gathered(started, "\(mark(worst)) \(started.count) alerts started")
+        + gathered(ended, "\(resolvedMark) \(ended.count) alerts resolved")
 }
 
+/// The coloured circles the server's Discord messages use, so how bad it is, or
+/// that it's over, shows before a word is read.
+func mark(_ severity: Severity) -> String {
+    severity == .critical ? "🔴" : "🟡"
+}
+
+let resolvedMark = "🟢"
+
 /// Many at once become one, which opens the alerts page.
-private func gathered(_ notices: [Notice], _ what: String) -> [Notice] {
+private func gathered(_ notices: [Notice], _ title: String) -> [Notice] {
     guard notices.count > mostNotices else { return notices }
     let first = notices.prefix(mostNotices).map(\.body).map { $0.components(separatedBy: "\n")[0] }
     let more = notices.count - mostNotices
     return [
         Notice(
             id: notices.map(\.id).joined(separator: ","),
-            title: "\(notices.count) \(what)",
+            title: title,
             body: (first + ["and \(more) more"]).joined(separator: "\n"),
             acknowledges: nil,
             path: "/alerts")

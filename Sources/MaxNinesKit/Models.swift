@@ -31,9 +31,14 @@ public struct ServerAlert: Decodable, Identifiable, Equatable, Sendable {
     /// Which of its rule's series it's about, such as a check's name. Empty for
     /// alerts about the host as a whole, and missing from older servers.
     public let series: String?
+    /// What was wrong, as it said when it fired.
     public let summary: String
     public let startedMs: Int64
     public let resolvedMs: Int64?
+    /// Where things stood as it cleared, such as "web-1 is back online". Missing
+    /// for one closed for another reason, such as its rule being deleted, and from
+    /// older servers.
+    public let resolvedSummary: String?
     public let acknowledgedBy: String?
     public let silenceId: Int?
     public let maintenanceWindowId: Int?
@@ -44,6 +49,9 @@ public struct ServerAlert: Decodable, Identifiable, Equatable, Sendable {
     public var canBeSilenced: Bool { ruleId != nil }
     /// Whether a silence or a maintenance window is keeping its notifications back.
     public var isSilenced: Bool { silenceId != nil || maintenanceWindowId != nil }
+    /// What it says now: where things stood as it cleared once it has, and what's
+    /// wrong until then, as the server's own notifications say.
+    public var saysNow: String { resolvedSummary ?? summary }
 }
 
 /// What `GET /api/v1/alerts` returns.

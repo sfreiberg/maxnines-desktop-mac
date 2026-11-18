@@ -261,12 +261,13 @@ let silencesJSON = """
 
 func alert(
     _ id: Int, _ severity: Severity, silenced: Bool = false, acknowledged: Bool = false,
-    resolvedMs: Int64? = nil
+    resolvedMs: Int64? = nil, resolvedSummary: String? = nil
 ) -> ServerAlert {
     let json = """
         {"id": \(id), "rule_id": 1, "rule_name": "Rule \(id)", "severity": "\(severity.rawValue)",
          "host_id": "h\(id)", "hostname": "host-\(id)", "summary": "Alert \(id)",
          "started_ms": 1793940000000, "resolved_ms": \(resolvedMs.map(String.init) ?? "null"),
+         "resolved_summary": \(resolvedSummary.map { "\"\($0)\"" } ?? "null"),
          "acknowledged_by": \(acknowledged ? "\"sam@example.com\"" : "null"),
          "silence_id": \(silenced ? "1" : "null"), "maintenance_window_id": null}
         """
@@ -282,13 +283,13 @@ let everything = NotifyWhen(critical: true, warnings: true, resolved: true)
         resolved: [])
     let all = notices(from: old, to: new, when: everything, now: now)
     // Not the one already firing, nor the silenced one.
-    #expect(all.map(\.title) == ["Critical: Rule 2", "Warning: Rule 3"])
+    #expect(all.map(\.title) == ["🔴 Critical: Rule 2", "🟡 Warning: Rule 3"])
     #expect(all[0].body == "Alert 2")
     #expect(all[0].acknowledges == 2)
     #expect(all[0].path == "/hosts/h2")
 
     let criticalOnly = NotifyWhen(critical: true, warnings: false, resolved: false)
-    #expect(notices(from: old, to: new, when: criticalOnly, now: now).map(\.title) == ["Critical: Rule 2"])
+    #expect(notices(from: old, to: new, when: criticalOnly, now: now).map(\.title) == ["🔴 Critical: Rule 2"])
     #expect(notices(from: old, to: new, when: NotifyWhen(critical: false, warnings: false, resolved: false)).isEmpty)
 }
 
@@ -296,7 +297,7 @@ let everything = NotifyWhen(critical: true, warnings: true, resolved: true)
     let old = Alerts(open: [alert(1, .warning)], resolved: [])
     let new = Alerts(open: [alert(1, .critical, acknowledged: true)], resolved: [])
     let all = notices(from: old, to: new, when: everything, now: now)
-    #expect(all.map(\.title) == ["Now critical: Rule 1"])
+    #expect(all.map(\.title) == ["🔴 Now critical: Rule 1"])
     // Someone's already on it.
     #expect(all[0].acknowledges == nil)
     // Getting better isn't news.
@@ -307,21 +308,30 @@ let everything = NotifyWhen(critical: true, warnings: true, resolved: true)
     let old = Alerts(open: [alert(1, .critical, silenced: true), alert(2, .warning, silenced: true)], resolved: [])
     let new = Alerts(open: [alert(1, .critical), alert(2, .critical)], resolved: [])
     // As the server tells people then, and as what it is now, not how it changed.
-    #expect(notices(from: old, to: new, when: everything, now: now).map(\.title) == ["Critical: Rule 1", "Critical: Rule 2"])
+    #expect(notices(from: old, to: new, when: everything, now: now).map(\.title) == ["🔴 Critical: Rule 1", "🔴 Critical: Rule 2"])
     // Still silenced, it stays quiet.
     #expect(notices(from: old, to: old, when: everything, now: now).isEmpty)
 }
 
-@Test func resolvedAlertsSayHowLongTheyLasted() {
-    let old = Alerts(open: [alert(1, .critical), alert(2, .warning), alert(3, .critical, silenced: true)], resolved: [])
+@Test func resolvedAlertsSayWhereThingsStandAndHowLongTheyLasted() {
+    let old = Alerts(
+        open: [alert(1, .critical), alert(2, .warning), alert(3, .critical, silenced: true), alert(4, .warning)],
+        resolved: [])
     let new = Alerts(
         open: [],
-        resolved: [alert(1, .critical, resolvedMs: 1793940180000), alert(3, .critical, resolvedMs: 1793940180000)])
+        resolved: [
+            alert(1, .critical, resolvedMs: 1793940180000, resolvedSummary: "host-1 is back online"),
+            alert(3, .critical, resolvedMs: 1793940180000, resolvedSummary: "host-3 is back online"),
+            alert(4, .warning, resolvedMs: 1793940060000),
+        ])
     let all = notices(from: old, to: new, when: everything, now: now)
     // The second just went, which the server doesn't call resolved, and the
     // third was silenced.
-    #expect(all.map(\.title) == ["Resolved: Rule 1"])
-    #expect(all[0].body == "Alert 1\nLasted 3m")
+    #expect(all.map(\.title) == ["🟢 Resolved: Rule 1", "🟢 Resolved: Rule 4"])
+    // Not what was wrong, which would read as the problem all over again.
+    #expect(all[0].body == "host-1 is back online\nLasted 3m")
+    // Closed for another reason, it has only what was wrong, said as past.
+    #expect(all[1].body == "Was: Alert 4\nLasted 1m")
     #expect(all[0].acknowledges == nil)
     #expect(notices(from: old, to: new, when: NotifyWhen(critical: true, warnings: true, resolved: false)).isEmpty)
 }
@@ -331,10 +341,18 @@ let everything = NotifyWhen(critical: true, warnings: true, resolved: true)
     let new = Alerts(open: (1...5).map { alert($0, .critical) }, resolved: [])
     let all = notices(from: old, to: new, when: everything, now: now)
     #expect(all.count == 1)
-    #expect(all[0].title == "5 alerts started")
+    #expect(all[0].title == "🔴 5 alerts started")
     #expect(all[0].body == "Alert 1\nAlert 2\nAlert 3\nand 2 more")
     #expect(all[0].path == "/alerts")
     #expect(all[0].acknowledges == nil)
+    // Only warnings say so.
+    let warnings = Alerts(open: (1...5).map { alert($0, .warning) }, resolved: [])
+    #expect(notices(from: old, to: warnings, when: everything, now: now)[0].title == "🟡 5 alerts started")
+    let over = notices(
+        from: new,
+        to: Alerts(open: [], resolved: (1...5).map { alert($0, .critical, resolvedMs: 1793940180000) }),
+        when: everything, now: now)
+    #expect(over.map(\.title) == ["🟢 5 alerts resolved"])
     // Three at once are each shown.
     let three = Alerts(open: (1...3).map { alert($0, .critical) }, resolved: [])
     #expect(notices(from: old, to: three, when: everything, now: now).count == 3)

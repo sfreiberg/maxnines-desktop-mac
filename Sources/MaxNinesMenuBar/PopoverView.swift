@@ -364,7 +364,7 @@ private struct ResolvedRow: View {
                 Button {
                     store.open("/hosts/\(alert.hostId)")
                 } label: {
-                    Text(alert.summary)
+                    Text(alert.saysNow)
                         .font(.system(size: 13))
                         .foregroundStyle(Theme.muted)
                         .multilineTextAlignment(.leading)
