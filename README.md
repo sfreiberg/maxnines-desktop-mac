@@ -4,6 +4,17 @@ A Mac menu bar app for [MaxNines](https://github.com/sfreiberg/maxnines). It sho
 alerts that are firing on your MaxNines server and links to its web interface. It's
 the Mac version of MaxNines Desktop for Windows, and does the same things.
 
+## Installing
+
+Download `maxnines-desktop-<version>.dmg` from
+[Releases](https://github.com/sfreiberg/maxnines-desktop-mac/releases). It runs on
+Apple silicon and Intel Macs with macOS 14 or later. Open it, and drag MaxNines Desktop
+to Applications.
+
+It isn't signed by Apple yet, so the first time you open it macOS says it can't check
+it. Choose **Done**, open **System Settings**, then **Privacy & Security**, and choose
+**Open Anyway** beside MaxNines Desktop. macOS remembers, so it only asks once.
+
 ## Setting it up
 
 1. Click its menu bar icon, enter your server's address, and choose **Sign in**.
@@ -56,12 +67,14 @@ remembers where it was when you turned it on.
 
 ## Building
 
-It needs macOS 14 or later and Swift 6.
+It needs macOS 14 or later and Swift 6. Its version is in `VERSION`, and a tag such as
+`v0.1.0-alpha.1` that matches it publishes a release with the disk image.
 
 ```sh
 scripts/bundle.sh                 # builds it and makes build/MaxNines Desktop.app
 open "build/MaxNines Desktop.app"
 scripts/test.sh                   # runs the tests
+scripts/package.sh                # makes dist/maxnines-desktop-<version>.dmg, needs Xcode
 ```
 
 The bottom of its settings says exactly which build it is: the version, the commit it

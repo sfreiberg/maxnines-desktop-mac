@@ -3,13 +3,26 @@
 # a name, keeps it out of the Dock and lets it reach a server on the local network.
 # It's MaxNines Desktop so it isn't taken for the agent or the server, but its
 # menu and notifications still say MaxNines.
+#
+# UNIVERSAL=1 builds it for both Apple silicon and Intel Macs in one, which needs
+# Xcode, as releases are.
 set -e
 cd "$(dirname "$0")/.."
-swift build -c release
+if [ -n "$UNIVERSAL" ]; then
+    swift build -c release --arch arm64 --arch x86_64
+    binary="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/MaxNinesMenuBar"
+else
+    swift build -c release
+    binary="$(swift build -c release --show-bin-path)/MaxNinesMenuBar"
+fi
 app="build/MaxNines Desktop.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-cp .build/release/MaxNinesMenuBar "$app/Contents/MacOS/MaxNines"
+cp "$binary" "$app/Contents/MacOS/MaxNines"
+# The version in VERSION, such as 0.1.0-alpha.1. macOS wants only the numbers for
+# its own, so the whole of it is kept apart for Settings to show.
+version=$(cat VERSION)
+numbers=${version%%-*}
 cp Resources/AppIcon.icns "$app/Contents/Resources/"
 # Which build this is, for Settings to show. A copy of the source with no git
 # history still builds, as "unknown".
@@ -30,8 +43,9 @@ cat > "$app/Contents/Info.plist" <<PLIST
     <key>CFBundleExecutable</key><string>MaxNines</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.1.0</string>
-    <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundleShortVersionString</key><string>$numbers</string>
+    <key>CFBundleVersion</key><string>$numbers</string>
+    <key>MaxNinesVersion</key><string>$version</string>
     <key>MaxNinesCommit</key><string>$commit</string>
     <key>MaxNinesBuiltAt</key><string>$built</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>

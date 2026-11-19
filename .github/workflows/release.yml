@@ -1,0 +1,113 @@
+# Builds the app for Apple silicon and Intel Macs in one disk image, checks what's in
+# it runs, and publishes a GitHub release when a version tag such as v0.1.0 is pushed.
+# A tag with a suffix, such as v0.1.0-alpha.1, makes a pre-release. The tag has to
+# match VERSION.
+#
+# A pull request that changes the packaging runs everything but publishing, so it's
+# known to work before a tag needs it. So does starting it by hand from Actions.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - scripts/bundle.sh
+      - scripts/package.sh
+      - VERSION
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+jobs:
+  check:
+    name: Version
+    # macOS runners cost private repos ten times what Linux ones do, so nothing runs
+    # until the repo is public, when they're free. The jobs after this one need it,
+    # so they're skipped too, and skipped jobs use no minutes.
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: version
+        run: |
+          version=$(cat VERSION)
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::The tag $GITHUB_REF_NAME doesn't match VERSION, $version"
+            exit 1
+          fi
+          case "$version" in *-*) prerelease=true ;; *) prerelease=false ;; esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+
+  disk-image:
+    name: Disk image
+    needs: check
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+      - run: scripts/test.sh
+      - run: scripts/package.sh
+      - name: Check what's in it
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          image="dist/maxnines-desktop-$VERSION.dmg"
+          mount=$(mktemp -d)
+          hdiutil attach -quiet -nobrowse -readonly -mountpoint "$mount" "$image"
+          app="$mount/MaxNines Desktop.app"
+          archs=$(lipo -archs "$app/Contents/MacOS/MaxNines")
+          case "$archs" in *arm64*x86_64*|*x86_64*arm64*) ;; *) echo "Only $archs"; exit 1 ;; esac
+          echo "ok: it runs on Apple silicon and Intel Macs"
+          said=$(/usr/libexec/PlistBuddy -c 'Print :MaxNinesVersion' "$app/Contents/Info.plist")
+          [ "$said" = "$VERSION" ] || { echo "It says it's $said"; exit 1; }
+          echo "ok: it's version $VERSION"
+          codesign --verify --deep --strict "$app"
+          echo "ok: its signature holds together"
+          test -L "$mount/Applications"
+          # Started, it stays up in the menu bar.
+          "$app/Contents/MacOS/MaxNines" &
+          started=$!
+          sleep 5
+          kill -0 "$started" || { echo "It stopped"; exit 1; }
+          kill "$started"
+          echo "ok: it starts and stays up"
+          hdiutil detach -quiet "$mount"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: disk-image
+          path: dist/*.dmg
+          retention-days: 14
+
+  publish:
+    name: Publish the release
+    if: github.ref_type == 'tag'
+    needs: [check, disk-image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: disk-image
+          path: release
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          (cd release && shasum -a 256 * > SHA256SUMS)
+          flags=
+          if [ "${{ needs.check.outputs.prerelease }}" = true ]; then
+            flags=--prerelease
+          fi
+          gh release create "$GITHUB_REF_NAME" release/* --repo "$GITHUB_REPOSITORY" \
+            --title "MaxNines Desktop for Mac $GITHUB_REF_NAME" --generate-notes $flags

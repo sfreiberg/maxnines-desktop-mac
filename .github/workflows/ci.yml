@@ -1,0 +1,17 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: Tests and build
+    # macOS runners cost private repos ten times what Linux ones do, so nothing runs
+    # until the repo is public, when they're free. Skipped jobs use no minutes.
+    if: ${{ !github.event.repository.private }}
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+      - run: scripts/test.sh
+      - run: scripts/bundle.sh

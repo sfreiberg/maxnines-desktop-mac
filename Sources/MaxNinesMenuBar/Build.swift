@@ -4,7 +4,8 @@ import Foundation
 /// worded as the MaxNines web interface words its own. Run without the bundle,
 /// as `swift run` does, none of it is known.
 enum Build {
-    static var version: String { value("CFBundleShortVersionString") }
+    /// The whole version, such as `0.1.0-alpha.1`, from the VERSION file.
+    static var version: String { value("MaxNinesVersion") }
     /// The git commit, ending in `-dirty` if it had uncommitted changes.
     static var commit: String { value("MaxNinesCommit") }
     /// When it was compiled, in UTC.
