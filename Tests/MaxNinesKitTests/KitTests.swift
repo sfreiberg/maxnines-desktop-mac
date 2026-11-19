@@ -10,17 +10,17 @@ let alertsJSON = """
         {"id": 7, "rule_id": 1, "rule_name": "High CPU", "severity": "warning",
          "host_id": "22ad9264b6eb708ffdbedcd5cc073e5c", "hostname": "web-1", "series": null,
          "value": 97.2, "summary": "High CPU on web-1", "started_at": "2026-11-06T04:44:39.545Z",
-         "resolved_at": null, "resolve_reason": null, "acknowledged_by": null,
+         "breached_at": "2026-11-06T04:39:39.545Z", "resolved_at": null, "resolve_reason": null, "acknowledged_by": null,
          "acknowledged_at": null, "silence_id": null, "maintenance_window_id": null},
         {"id": 9, "rule_id": null, "rule_name": "Service stopped", "severity": "critical",
          "host_id": "fleet", "hostname": "Fleet", "series": "nginx.service", "value": 0,
          "summary": "Service nginx.service on web-1 is failed", "started_at": "2026-11-06T04:43:20Z",
-         "resolved_at": null, "resolve_reason": null, "acknowledged_by": "sam@example.com",
+         "breached_at": "2026-11-06T04:43:20Z", "resolved_at": null, "resolve_reason": null, "acknowledged_by": "sam@example.com",
          "acknowledged_at": "2026-11-06T04:43:30Z", "silence_id": 3, "maintenance_window_id": null,
          "added_later": {"anything": true}},
         {"id": 10, "rule_id": 4, "rule_name": "New", "severity": "catastrophic",
          "host_id": "a", "hostname": "db-1", "series": null, "value": null,
-         "summary": "Something new", "started_at": "2026-11-06T04:41:40Z", "resolved_at": null,
+         "summary": "Something new", "started_at": "2026-11-06T04:41:40Z", "breached_at": "2026-11-06T04:41:40Z", "resolved_at": null,
          "resolve_reason": null, "acknowledged_by": null, "acknowledged_at": null,
          "silence_id": null, "maintenance_window_id": null}
       ],
@@ -28,12 +28,13 @@ let alertsJSON = """
         {"id": 5, "rule_id": 2, "rule_name": "Container down", "severity": "critical",
          "host_id": "a", "hostname": "db-1", "series": "web", "value": 0,
          "summary": "Container web on db-1 is exited", "started_at": "2026-11-06T03:33:20Z",
-         "resolved_at": "2026-11-06T04:23:20Z", "resolve_reason": "The problem cleared",
+         "breached_at": "2026-11-06T03:28:20Z", "resolved_at": "2026-11-06T04:23:20Z", "resolve_reason": "The problem cleared",
          "acknowledged_by": null, "acknowledged_at": null, "silence_id": null,
          "maintenance_window_id": null},
         {"id": 2, "rule_id": 2, "rule_name": "Container down", "severity": "critical",
          "host_id": "a", "hostname": "db-1", "series": "web", "value": 0,
-         "summary": "Long ago", "started_at": "2026-10-26T07:33:20Z", "resolved_at": "2026-10-26T07:35:00Z",
+         "summary": "Long ago", "started_at": "2026-10-26T07:33:20Z", "breached_at": "2026-10-26T07:33:20Z",
+         "resolved_at": "2026-10-26T07:35:00Z",
          "resolve_reason": "The problem cleared", "acknowledged_by": null,
          "acknowledged_at": null, "silence_id": null, "maintenance_window_id": null}
       ]
@@ -95,6 +96,7 @@ let now = Client.moment("2026-11-06T04:45:00Z")!
     // The server leaves the fraction out when the milliseconds are zero.
     #expect(alerts.open[1].startedAt == Date(timeIntervalSince1970: 1_793_940_200))
     #expect(alerts.open[0].resolvedAt == nil)
+    #expect(alerts.open[0].breachedAt == started.addingTimeInterval(-300))
     // Milliseconds since 1970, as older servers sent, aren't a time.
     #expect(Client.moment("1793940279545") == nil)
     #expect(throws: DecodingError.self) {
@@ -107,7 +109,8 @@ let now = Client.moment("2026-11-06T04:45:00Z")!
     let (alerts, hosts) = try decoded()
     let overview = Overview(alerts: alerts, hosts: hosts, now: now)
 
-    #expect(overview.firing.map(\.id) == [9, 7, 10])
+    // The newest problem first, which isn't always the one that fired last.
+    #expect(overview.firing.map(\.id) == [9, 10, 7])
     #expect(overview.worst == .critical)
     #expect(overview.headline == "1 critical, 2 warnings")
     // Only what ended in the last hour.
@@ -186,7 +189,8 @@ let now = Client.moment("2026-11-06T04:45:00Z")!
             #"""
             {"id": 11, "rule_id": 6, "rule_name": "Half the web hosts down", "severity": "critical",
              "host_id": "fleet", "hostname": "Fleet", "series": null, "summary": "Half down",
-             "started_at": "2026-11-06T04:40:00Z", "resolved_at": null, "acknowledged_by": null, "silence_id": null,
+             "started_at": "2026-11-06T04:40:00Z", "breached_at": "2026-11-06T04:40:00Z",
+             "resolved_at": null, "acknowledged_by": null, "silence_id": null,
              "maintenance_window_id": null}
             """#.utf8))
     #expect(try body(fleet) == #"{"duration_secs":3600,"reason":"Silenced from the menu bar","rule_id":6}"#)
@@ -292,7 +296,8 @@ func alert(
     let json = """
         {"id": \(id), "rule_id": 1, "rule_name": "Rule \(id)", "severity": "\(severity.rawValue)",
          "host_id": "h\(id)", "hostname": "host-\(id)", "summary": "Alert \(id)",
-         "started_at": "2026-11-06T04:40:00Z", "resolved_at": \(resolvedAt.map { "\"\($0)\"" } ?? "null"),
+         "started_at": "2026-11-06T04:40:00Z", "breached_at": "2026-11-06T04:35:00Z",
+         "resolved_at": \(resolvedAt.map { "\"\($0)\"" } ?? "null"),
          "resolved_summary": \(resolvedSummary.map { "\"\($0)\"" } ?? "null"),
          "acknowledged_by": \(acknowledged ? "\"sam@example.com\"" : "null"),
          "silence_id": \(silenced ? "1" : "null"), "maintenance_window_id": null}
@@ -355,9 +360,11 @@ let everything = NotifyWhen(critical: true, warnings: true, resolved: true)
     // third was silenced.
     #expect(all.map(\.title) == ["🟢 Resolved: Rule 1", "🟢 Resolved: Rule 4"])
     // Not what was wrong, which would read as the problem all over again.
-    #expect(all[0].body == "host-1 is back online\nLasted 3m")
+    // From when the problem began, five minutes before it fired, as the server's
+    // pages count it.
+    #expect(all[0].body == "host-1 is back online\nLasted 8m")
     // Closed for another reason, it has only what was wrong, said as past.
-    #expect(all[1].body == "Was: Alert 4\nLasted 1m")
+    #expect(all[1].body == "Was: Alert 4\nLasted 6m")
     #expect(all[0].acknowledges == nil)
     #expect(notices(from: old, to: new, when: NotifyWhen(critical: true, warnings: true, resolved: false)).isEmpty)
 }

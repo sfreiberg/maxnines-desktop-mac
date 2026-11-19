@@ -302,7 +302,7 @@ private struct FiringRow: View {
     }
 
     private var detail: String {
-        var parts = [alert.ruleName, age(since: alert.startedAt, now: now)]
+        var parts = [alert.ruleName, age(since: alert.breachedAt, now: now)]
         if let who = alert.acknowledgedBy {
             parts.append("acknowledged by \(who)")
         }

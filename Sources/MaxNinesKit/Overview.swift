@@ -2,7 +2,7 @@ import Foundation
 
 /// What the menu bar shows, worked out from what the server lists.
 public struct Overview: Equatable, Sendable {
-    /// Firing now, worst first and then newest first.
+    /// Firing now, worst first and then newest problem first.
     public let firing: [ServerAlert]
     /// What ended in the last hour, newest first.
     public let resolved: [ServerAlert]
@@ -23,7 +23,7 @@ public struct Overview: Equatable, Sendable {
     ) {
         firing = alerts.open.sorted { left, right in
             left.severity != right.severity
-                ? left.severity > right.severity : left.startedAt > right.startedAt
+                ? left.severity > right.severity : left.breachedAt > right.breachedAt
         }
         let since = now.addingTimeInterval(-Overview.recently)
         resolved = Array(

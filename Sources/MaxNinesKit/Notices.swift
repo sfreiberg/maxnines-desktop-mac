@@ -77,7 +77,7 @@ public func notices(from old: Alerts, to new: Alerts, when: NotifyWhen, now: Dat
             // Only what the server says has resolved: one that's just gone, as
             // when its host was deleted, isn't news worth telling.
             guard let done = resolved[alert.id] else { continue }
-            let lasted = age(since: done.startedAt, now: done.resolvedAt ?? now)
+            let lasted = age(since: done.breachedAt, now: done.resolvedAt ?? now)
             // Where things stand now, so it doesn't read as the problem again. One
             // closed for another reason has only what was wrong, said as past.
             let outcome = done.resolvedSummary ?? "Was: \(done.summary)"

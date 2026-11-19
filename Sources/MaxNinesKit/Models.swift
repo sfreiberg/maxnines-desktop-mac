@@ -33,7 +33,12 @@ public struct ServerAlert: Decodable, Identifiable, Equatable, Sendable {
     public let series: String?
     /// What was wrong, as it said when it fired.
     public let summary: String
+    /// When it fired.
     public let startedAt: Date
+    /// When its problem began, such as when a host went offline: before it fired,
+    /// by at least its rule's wait. What the server's pages count how long it's
+    /// lasted from, and so does this app.
+    public let breachedAt: Date
     public let resolvedAt: Date?
     /// Where things stood as it cleared, such as "web-1 is back online". Missing
     /// for one closed for another reason, such as its rule being deleted, and from
