@@ -70,3 +70,7 @@ built.
 
 A server reached over plain `http` has to be on your local network, as macOS won't let
 the app send its sign in unencrypted any further.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
