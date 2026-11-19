@@ -26,10 +26,25 @@ enum IconState: Equatable {
     }
 }
 
+/// The icon last made, and what it says.
+@MainActor private var made: (state: IconState, image: NSImage)?
+
+/// The icon for `state`. The same one is given while the state stays the same, as
+/// the label is asked for it whenever anything the app shows changes, such as when
+/// the server was last asked, and the menu bar needn't be redrawn for that.
+@MainActor func menuBarImage(_ state: IconState) -> NSImage {
+    if let made, made.state == state {
+        return made.image
+    }
+    let image = newMenuBarImage(state)
+    made = (state, image)
+    return image
+}
+
 /// Draws the icon. Its colours are worked out each time it's drawn, so it suits
 /// a light or dark menu bar, and it isn't a template image, as macOS would take
 /// the colour out of one.
-func menuBarImage(_ state: IconState) -> NSImage {
+private func newMenuBarImage(_ state: IconState) -> NSImage {
     let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
     let text: String?
     switch state {
