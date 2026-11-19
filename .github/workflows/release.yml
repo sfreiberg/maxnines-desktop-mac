@@ -1,7 +1,11 @@
 # Builds the app for Apple silicon and Intel Macs in one disk image, checks what's in
-# it runs, and publishes a GitHub release when a version tag such as v0.1.0 is pushed.
-# A tag with a suffix, such as v0.1.0-alpha.1, makes a pre-release. The tag has to
-# match VERSION.
+# it runs, and publishes a GitHub release when a version tag is pushed.
+#
+# Every MaxNines repo releases the same way. A tag v1.2.3 is a production release,
+# and v1.2.3-alpha.N, v1.2.3-beta.N or v1.2.3-rc.N a pre-release, published as one;
+# only production releases become the latest. The tag has to match the version in
+# VERSION. Each release is titled "MaxNines Desktop for Mac 1.2.3", with notes
+# from the commits, its files, and their SHA256SUMS.
 #
 # A pull request that changes the packaging runs everything but publishing, so it's
 # known to work before a tag needs it. So does starting it by hand from Actions.
@@ -41,6 +45,10 @@ jobs:
       - id: version
         run: |
           version=$(cat VERSION)
+          if ! echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[1-9][0-9]*)?$'; then
+            echo "::error::$version can't be released: a version is 1.2.3, or 1.2.3-alpha.N, -beta.N or -rc.N"
+            exit 1
+          fi
           if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
             echo "::error::The tag $GITHUB_REF_NAME doesn't match VERSION, $version"
             exit 1
@@ -109,5 +117,5 @@ jobs:
           if [ "${{ needs.check.outputs.prerelease }}" = true ]; then
             flags=--prerelease
           fi
-          gh release create "$GITHUB_REF_NAME" release/* --repo "$GITHUB_REPOSITORY" \
-            --title "MaxNines Desktop for Mac $GITHUB_REF_NAME" --generate-notes $flags
+          gh release create "$GITHUB_REF_NAME" --verify-tag release/* --repo "$GITHUB_REPOSITORY" \
+            --title "MaxNines Desktop for Mac ${{ needs.check.outputs.version }}" --generate-notes $flags
