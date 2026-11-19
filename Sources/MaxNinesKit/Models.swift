@@ -28,8 +28,8 @@ public struct ServerAlert: Decodable, Identifiable, Equatable, Sendable {
     public let severity: Severity
     public let hostId: String
     public let hostname: String
-    /// Which of its rule's series it's about, such as a check's name. Empty for
-    /// alerts about the host as a whole, and missing from older servers.
+    /// Which of its rule's series it's about, such as a check's name. Nil for
+    /// alerts about the host as a whole.
     public let series: String?
     /// What was wrong, as it said when it fired.
     public let summary: String
@@ -71,10 +71,10 @@ public struct Silence: Decodable, Identifiable, Equatable, Sendable {
     public let id: Int
     /// The alert rule it covers, or every rule.
     public let ruleId: Int?
-    /// Which hosts it covers, such as `id=7f3c…` or `hostname=db*`. Empty for all.
-    public let filter: String
-    /// One series alone, such as a check's name. Empty for all.
-    public let series: String
+    /// Which hosts it covers, such as `id=7f3c…` or `hostname=db*`. Nil for all.
+    public let filter: String?
+    /// One series alone, such as a check's name. Nil for all.
+    public let series: String?
     public let reason: String
     public let endsAt: Date
 }
@@ -102,12 +102,10 @@ public struct RemoteCheck: Decodable, Identifiable, Equatable, Sendable {
 public struct MonitoredHost: Decodable, Identifiable, Equatable, Sendable {
     public let id: String
     public let hostname: String
-    public let publicKey: String
     public let state: String
     public let online: Bool
-    /// `agent`, `agentless` or `built_in`. A server from before hosts could go
-    /// without an agent doesn't say.
-    public let kind: String?
+    /// `agent`, `agentless` or `built_in`.
+    public let kind: String
     /// How it is, such as `online`, `offline` or `not_read`.
     public let health: String?
 
@@ -115,8 +113,6 @@ public struct MonitoredHost: Decodable, Identifiable, Equatable, Sendable {
     /// own built-in hosts, and not one with no agent that nothing is read for,
     /// which is neither online nor offline.
     public var isCounted: Bool {
-        guard state == "approved", health != "not_read" else { return false }
-        // Without a kind, only a built-in host has no key.
-        return kind.map { $0 != "built_in" } ?? !publicKey.isEmpty
+        state == "approved" && health != "not_read" && kind != "built_in"
     }
 }

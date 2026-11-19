@@ -209,7 +209,7 @@ public struct Client: Sendable {
         if alert.hostId != "fleet" {
             body["filter"] = "id=\(alert.hostId)"
         }
-        if let series = alert.series, !series.isEmpty {
+        if let series = alert.series {
             body["series"] = series
         }
         return try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])

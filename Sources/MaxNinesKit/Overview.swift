@@ -102,14 +102,14 @@ public struct SilenceRow: Equatable, Identifiable, Sendable {
         if let rule = silence.ruleId {
             what.append(rules[rule] ?? "One alert rule")
         }
-        if !silence.series.isEmpty {
-            what.append(silence.series)
+        if let series = silence.series {
+            what.append(series)
         }
-        let filter = silence.filter.trimmingCharacters(in: .whitespaces)
-        let host = filter.hasPrefix("id=") ? hosts.first { "id=\($0.id)" == filter } : nil
-        let where_ = filter.isEmpty ? "every host" : host?.hostname ?? filter
+        let filter = silence.filter
+        let host = filter.flatMap { filter in hosts.first { "id=\($0.id)" == filter } }
+        let where_ = filter.map { host?.hostname ?? $0 } ?? "every host"
         covers = what.isEmpty
-            ? (filter.isEmpty ? "Every alert" : "Everything on \(where_)")
+            ? (filter == nil ? "Every alert" : "Everything on \(where_)")
             : "\(what.joined(separator: " ")) on \(where_)"
     }
 }
