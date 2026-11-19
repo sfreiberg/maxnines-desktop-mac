@@ -23,6 +23,9 @@ struct PopoverView: View {
                 if let problem = store.actionProblem {
                     notice(problem)
                 }
+                if let problem = store.saveProblem {
+                    notice(problem)
+                }
                 Divider().overlay(Theme.border)
                 footer
             }

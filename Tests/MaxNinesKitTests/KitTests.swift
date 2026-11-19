@@ -628,7 +628,7 @@ func holder(
 ) -> TokenHolder {
     TokenHolder(
         refreshToken: refreshToken, endpoints: SignInEndpoints(server: testServer, transport: server.transport),
-        save: { tokens in saved.locked { $0.append(tokens) } }, now: { clock?.value ?? Date() },
+        save: { tokens in saved.locked { $0.append(tokens) }; return true }, now: { clock?.value ?? Date() },
         retryDelays: retryDelays)
 }
 
@@ -730,7 +730,7 @@ func holder(
     let clock = Box(Date(timeIntervalSince1970: 1_000_000))
     let tokens = TokenHolder(
         tokens: Tokens(accessToken: "mxa_1", expiresIn: 3600, refreshToken: "mxr_1", role: "responder", user: "a"),
-        endpoints: SignInEndpoints(server: testServer, transport: server.transport), save: { _ in },
+        endpoints: SignInEndpoints(server: testServer, transport: server.transport), save: { _ in true },
         now: { clock.value }, retryDelays: [])
     #expect(try await tokens.accessToken() == "mxa_1")
     #expect(server.requests.value.isEmpty)
@@ -752,6 +752,72 @@ func holder(
     }
     let client = Client(server: testServer, tokens: holder(server, saved: saved), transport: server.transport)
     #expect(try await client.hosts().isEmpty)
+}
+
+@Test func justSignedInTheTokensAreKeptBeforeTheyreUsed() async throws {
+    let saved = Box<[Tokens?]>([])
+    let tokens = Tokens(accessToken: "mxa_1", expiresIn: 3600, refreshToken: "mxr_1", role: "responder", user: "a")
+    let holder = TokenHolder(
+        tokens: tokens, endpoints: SignInEndpoints(server: testServer, transport: FakeServer { _ in (500, "") }.transport),
+        save: { tokens in saved.locked { $0.append(tokens) }; return true })
+    #expect(saved.value == [tokens])
+    #expect(await holder.isSaved)
+}
+
+@Test func aRefreshTokenTheKeychainWontKeepIsUsedAndKeptOnceItWill() async throws {
+    let server = FakeServer { _ in (200, tokensJSON("mxa_1", "mxr_1")) }
+    let works = Box(false)
+    let tries = Box<[String?]>([])
+    let tokens = TokenHolder(
+        refreshToken: "mxr_0", endpoints: SignInEndpoints(server: testServer, transport: server.transport),
+        save: { tokens in
+            tries.locked { $0.append(tokens?.refreshToken) }
+            return works.value
+        }, retryDelays: [])
+    #expect(await tokens.isSaved)
+    // The server has replaced the old one, so the new one is used all the same,
+    // and said not to be kept.
+    #expect(try await tokens.accessToken() == "mxa_1")
+    #expect(await !tokens.isSaved)
+    let failed = tries.value.count
+    #expect(failed >= 2)
+    // Tried again each time a token is asked for, until it's kept.
+    #expect(try await tokens.accessToken() == "mxa_1")
+    #expect(tries.value.count == failed + 1)
+    works.value = true
+    #expect(try await tokens.accessToken() == "mxa_1")
+    #expect(await tokens.isSaved)
+    #expect(tries.value.allSatisfy { $0 == "mxr_1" })
+    let kept = tries.value.count
+    #expect(try await tokens.accessToken() == "mxa_1")
+    #expect(tries.value.count == kept)
+    #expect(server.count("/oauth/token") == 1)
+}
+
+@Test func onlyTheNewestSignInChangesTheKeptToken() {
+    let kept = Box<String?>(nil)
+    let fails = Box(false)
+    let slot = TokenSlot(write: { token in
+        if fails.value { return false }
+        kept.value = token
+        return true
+    })
+    let first = slot.claim()
+    #expect(slot.save("mxr_1", for: first))
+    // Signed out, then in again, while the first was still refreshing.
+    let signedOut = slot.claim()
+    #expect(slot.save(nil, for: signedOut))
+    let second = slot.claim()
+    #expect(slot.save("mxr_2", for: second))
+    // The first finishing its refresh, or its sign out, changes nothing.
+    #expect(slot.save("mxr_1b", for: first))
+    #expect(slot.save(nil, for: first))
+    #expect(kept.value == "mxr_2")
+    // Only the newest says when it couldn't be kept.
+    fails.value = true
+    #expect(slot.save("mxr_1c", for: first))
+    #expect(!slot.save("mxr_3", for: second))
+    #expect(kept.value == "mxr_2")
 }
 
 @Test func aRefreshTokenThatNoLongerWorksSignsOut() async throws {
@@ -804,7 +870,7 @@ func holder(
     }
     let tokens = TokenHolder(
         tokens: Tokens(accessToken: "mxa_old", expiresIn: 3600, refreshToken: "mxr_old", role: "responder", user: "a"),
-        endpoints: SignInEndpoints(server: testServer, transport: server.transport), save: { _ in },
+        endpoints: SignInEndpoints(server: testServer, transport: server.transport), save: { _ in true },
         retryDelays: [])
     let client = Client(server: testServer, tokens: tokens, transport: server.transport)
     // Several turned down at once still refresh only once.

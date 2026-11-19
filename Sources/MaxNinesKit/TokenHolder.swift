@@ -9,8 +9,13 @@ import Foundation
 /// refresh runs at a time, and everything that needs a token meanwhile waits for it.
 public actor TokenHolder: AccessTokens {
     private let endpoints: SignInEndpoints
-    /// Keeps tokens, or forgets them when given nil, as when signed out.
-    private let save: @Sendable (Tokens?) -> Void
+    /// Keeps tokens, or forgets them when given nil, as when signed out, and
+    /// says whether that worked.
+    private let save: @Sendable (Tokens?) -> Bool
+    /// The newest tokens, while `save` couldn't keep them. They're used all the
+    /// same, as the server has already replaced the ones kept before, and saved
+    /// again each time a token is asked for, until they're kept.
+    private var unsaved: Tokens?
     private let now: @Sendable () -> Date
     private var refreshToken: String?
     private var access: (token: String, expires: Date)?
@@ -28,9 +33,9 @@ public actor TokenHolder: AccessTokens {
     /// the token would get the whole sign in revoked.
     private let retryDelays: [TimeInterval]
 
-    /// Just signed in, with tokens that `save` already has.
+    /// Just signed in: `save` keeps the tokens before anything uses them.
     public init(
-        tokens: Tokens, endpoints: SignInEndpoints, save: @escaping @Sendable (Tokens?) -> Void,
+        tokens: Tokens, endpoints: SignInEndpoints, save: @escaping @Sendable (Tokens?) -> Bool,
         now: @escaping @Sendable () -> Date = { Date() }, retryDelays: [TimeInterval] = [2, 5, 15]
     ) {
         self.retryDelays = retryDelays
@@ -39,12 +44,13 @@ public actor TokenHolder: AccessTokens {
         self.now = now
         self.refreshToken = tokens.refreshToken
         self.access = (tokens.accessToken, now().addingTimeInterval(TimeInterval(tokens.expiresIn)))
+        self.unsaved = save(tokens) ? nil : tokens
     }
 
     /// Signed in earlier, with only the saved refresh token, so the first request
     /// refreshes.
     public init(
-        refreshToken: String, endpoints: SignInEndpoints, save: @escaping @Sendable (Tokens?) -> Void,
+        refreshToken: String, endpoints: SignInEndpoints, save: @escaping @Sendable (Tokens?) -> Bool,
         now: @escaping @Sendable () -> Date = { Date() }, retryDelays: [TimeInterval] = [2, 5, 15]
     ) {
         self.retryDelays = retryDelays
@@ -54,7 +60,16 @@ public actor TokenHolder: AccessTokens {
         self.refreshToken = refreshToken
     }
 
+    /// Whether the newest refresh token is kept, so it's what the app starts with
+    /// next time. If it isn't, the next start would present one the server has
+    /// replaced, and the server would revoke the whole sign in.
+    public var isSaved: Bool {
+        keepUnsaved()
+        return unsaved == nil
+    }
+
     public func accessToken() async throws -> String {
+        keepUnsaved()
         if let token = current() {
             return token
         }
@@ -62,6 +77,7 @@ public actor TokenHolder: AccessTokens {
     }
 
     public func accessToken(replacing rejected: String) async throws -> String {
+        keepUnsaved()
         // Another request may have fetched a new one already.
         if let token = current(), token != rejected {
             return token
@@ -80,9 +96,17 @@ public actor TokenHolder: AccessTokens {
         let token = refreshToken ?? access?.token
         refreshToken = nil
         access = nil
-        save(nil)
+        unsaved = nil
+        _ = save(nil)
         if let token {
             try await endpoints.revoke(token)
+        }
+    }
+
+    /// Tries again to keep tokens `save` couldn't.
+    private func keepUnsaved() {
+        if let unsaved, save(unsaved) {
+            self.unsaved = nil
         }
     }
 
@@ -136,13 +160,45 @@ public actor TokenHolder: AccessTokens {
             // It's run out or been revoked, and won't work again.
             self.refreshToken = nil
             access = nil
-            save(nil)
+            unsaved = nil
+            _ = save(nil)
             throw ClientError.signedOut
         }
         // Kept before it's used, so a crash now can't leave the old one saved.
-        save(tokens)
+        unsaved = save(tokens) ? nil : tokens
         self.refreshToken = tokens.refreshToken
         access = (tokens.accessToken, now().addingTimeInterval(TimeInterval(tokens.expiresIn)))
         return tokens.accessToken
+    }
+}
+
+/// Where the app keeps its sign in's refresh token, which only the newest sign in
+/// may change. One signed out of or replaced may still be finishing a refresh or
+/// a sign out, and mustn't overwrite or forget the token of the one after it.
+public final class TokenSlot: @unchecked Sendable {
+    /// Keeps a refresh token, or forgets it when given nil, and says whether that
+    /// worked.
+    private let write: @Sendable (String?) -> Bool
+    private let lock = NSLock()
+    private var newest = 0
+
+    public init(write: @escaping @Sendable (String?) -> Bool) {
+        self.write = write
+    }
+
+    /// Hands the slot to a new sign in, or to signing out. Gives back what it's
+    /// saved with, and no earlier claim can change it after this.
+    public func claim() -> Int {
+        lock.withLock {
+            newest += 1
+            return newest
+        }
+    }
+
+    /// Keeps `token`, or forgets it when nil, if `claim` is still the newest.
+    /// Returns false only when it should have and couldn't.
+    public func save(_ token: String?, for claim: Int) -> Bool {
+        // Held while writing, so a claim can't come between the check and the write.
+        lock.withLock { claim == newest ? write(token) : true }
     }
 }

@@ -22,9 +22,13 @@ final class Store: ObservableObject {
     @Published private(set) var signingIn = false
     /// Why the last sign in or sign out didn't go as it should.
     @Published var signInProblem: String?
+    /// Set while the Keychain won't keep the sign in's newest refresh token.
+    @Published private(set) var saveProblem: String?
 
     private var client: Client?
     private var tokens: TokenHolder?
+    /// Where the refresh token is kept, which only the newest sign in can change.
+    private let slot = TokenSlot(write: { Keychain.setRefreshToken($0) })
     private var signingInTask: Task<Void, Never>?
     /// Counts each sign in started, so one that's been cancelled or started
     /// again doesn't say it's finished.
@@ -158,8 +162,6 @@ final class Store: ObservableObject {
                     }
                     return
                 }
-                // Kept before anything uses it.
-                Keychain.setRefreshToken(tokens.refreshToken)
                 Keychain.forgetAPIKey()
                 address = typed.trimmingCharacters(in: .whitespacesAndNewlines)
                 UserDefaults.standard.set(address, forKey: Store.addressKey)
@@ -192,14 +194,20 @@ final class Store: ObservableObject {
         let tokens = self.tokens
         disconnect()
         signedIn(as: nil)
-        Keychain.setRefreshToken(nil)
+        // Claimed first, so the sign in being ended can't save a token it's still
+        // refreshing, and nothing it does later forgets a newer sign in's.
+        let forgot = slot.save(nil, for: slot.claim())
+        let keychain = forgot ? "" : " The Keychain wouldn't forget the sign in, so it may be tried again when the app next starts."
         signInProblem = nil
         Task {
             do {
                 try await tokens?.signOut()
+                if !forgot {
+                    signInProblem = "Signed out on the server.\(keychain)"
+                }
             } catch {
                 signInProblem =
-                    "Signed out here, but the server couldn't be told. Revoke it in MaxNines under Settings, then Signed-in apps."
+                    "Signed out here, but the server couldn't be told. Revoke it in MaxNines under Settings, then Signed-in apps.\(keychain)"
             }
         }
     }
@@ -219,6 +227,7 @@ final class Store: ObservableObject {
         updated = nil
         // Another server's alerts aren't news about this one's.
         watch = AlertWatch()
+        saveProblem = nil
         lastChecks = nil
         lastSilences = nil
         connection += 1
@@ -229,18 +238,20 @@ final class Store: ObservableObject {
     /// Starts asking `server`, with tokens from `holder`.
     private func connect(
         _ server: ServerAddress,
-        holder: (SignInEndpoints, @escaping @Sendable (Tokens?) -> Void) -> TokenHolder
+        holder: (SignInEndpoints, @escaping @Sendable (Tokens?) -> Bool) -> TokenHolder
     ) {
         disconnect()
         let connected = connection
+        let claim = slot.claim()
         // Each refresh token is kept as soon as it comes, and who's signed in kept
         // up to date, unless this sign in has since ended.
-        let save: @Sendable (Tokens?) -> Void = { [weak self] tokens in
-            Keychain.setRefreshToken(tokens?.refreshToken)
+        let save: @Sendable (Tokens?) -> Bool = { [weak self, slot] tokens in
+            let kept = slot.save(tokens?.refreshToken, for: claim)
             Task { @MainActor in
                 guard let self, self.connection == connected else { return }
                 self.signedIn(as: tokens)
             }
+            return kept
         }
         let tokens = holder(SignInEndpoints(server: server), save)
         self.tokens = tokens
@@ -255,7 +266,7 @@ final class Store: ObservableObject {
     }
 
     func refresh() async {
-        guard let client else { return }
+        guard let client, let holder = tokens else { return }
         let asked = connection
         asks += 1
         let ask = asks
@@ -270,8 +281,12 @@ final class Store: ObservableObject {
             async let silencesAsked = outcome { try await client.silences() }
             let (alerts, hosts) = try await (alertsAsked, hostsAsked)
             let (checksGot, silencesGot) = await (checksAsked, silencesAsked)
+            let saved = await holder.isSaved
             guard current() else { return }
             answered = ask
+            saveProblem = saved
+                ? nil
+                : "The Keychain won't keep the sign in's newest token, so quitting now would sign the app out. Make sure the login keychain is unlocked."
             let checks = extra(checksGot, before: lastChecks)
             let silences = extra(silencesGot, before: lastSilences)
             lastChecks = checks
