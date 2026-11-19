@@ -9,33 +9,33 @@ let alertsJSON = """
       "open": [
         {"id": 7, "rule_id": 1, "rule_name": "High CPU", "severity": "warning",
          "host_id": "22ad9264b6eb708ffdbedcd5cc073e5c", "hostname": "web-1", "series": "",
-         "value": 97.2, "summary": "High CPU on web-1", "started_ms": 1793940279545,
-         "resolved_ms": null, "resolve_reason": null, "acknowledged_by": null,
-         "acknowledged_ms": null, "silence_id": null, "maintenance_window_id": null},
+         "value": 97.2, "summary": "High CPU on web-1", "started_at": "2026-11-06T04:44:39.545Z",
+         "resolved_at": null, "resolve_reason": null, "acknowledged_by": null,
+         "acknowledged_at": null, "silence_id": null, "maintenance_window_id": null},
         {"id": 9, "rule_id": null, "rule_name": "Service stopped", "severity": "critical",
          "host_id": "fleet", "hostname": "Fleet", "series": "nginx.service", "value": 0,
-         "summary": "Service nginx.service on web-1 is failed", "started_ms": 1793940200000,
-         "resolved_ms": null, "resolve_reason": null, "acknowledged_by": "sam@example.com",
-         "acknowledged_ms": 1793940210000, "silence_id": 3, "maintenance_window_id": null,
+         "summary": "Service nginx.service on web-1 is failed", "started_at": "2026-11-06T04:43:20Z",
+         "resolved_at": null, "resolve_reason": null, "acknowledged_by": "sam@example.com",
+         "acknowledged_at": "2026-11-06T04:43:30Z", "silence_id": 3, "maintenance_window_id": null,
          "added_later": {"anything": true}},
         {"id": 10, "rule_id": 4, "rule_name": "New", "severity": "catastrophic",
          "host_id": "a", "hostname": "db-1", "series": "", "value": null,
-         "summary": "Something new", "started_ms": 1793940100000, "resolved_ms": null,
-         "resolve_reason": null, "acknowledged_by": null, "acknowledged_ms": null,
+         "summary": "Something new", "started_at": "2026-11-06T04:41:40Z", "resolved_at": null,
+         "resolve_reason": null, "acknowledged_by": null, "acknowledged_at": null,
          "silence_id": null, "maintenance_window_id": null}
       ],
       "resolved": [
         {"id": 5, "rule_id": 2, "rule_name": "Container down", "severity": "critical",
          "host_id": "a", "hostname": "db-1", "series": "web", "value": 0,
-         "summary": "Container web on db-1 is exited", "started_ms": 1793936000000,
-         "resolved_ms": 1793939000000, "resolve_reason": "The problem cleared",
-         "acknowledged_by": null, "acknowledged_ms": null, "silence_id": null,
+         "summary": "Container web on db-1 is exited", "started_at": "2026-11-06T03:33:20Z",
+         "resolved_at": "2026-11-06T04:23:20Z", "resolve_reason": "The problem cleared",
+         "acknowledged_by": null, "acknowledged_at": null, "silence_id": null,
          "maintenance_window_id": null},
         {"id": 2, "rule_id": 2, "rule_name": "Container down", "severity": "critical",
          "host_id": "a", "hostname": "db-1", "series": "web", "value": 0,
-         "summary": "Long ago", "started_ms": 1793000000000, "resolved_ms": 1793000100000,
+         "summary": "Long ago", "started_at": "2026-10-26T07:33:20Z", "resolved_at": "2026-10-26T07:35:00Z",
          "resolve_reason": "The problem cleared", "acknowledged_by": null,
-         "acknowledged_ms": null, "silence_id": null, "maintenance_window_id": null}
+         "acknowledged_at": null, "silence_id": null, "maintenance_window_id": null}
       ]
     }
     """
@@ -43,8 +43,9 @@ let alertsJSON = """
 let hostsJSON = """
     [
       {"id": "22ad", "public_key": "912e", "hostname": "web-1", "state": "approved",
-       "decided_by": "you@example.com", "first_seen_ms": 1, "decided_ms": 2, "online": true,
-       "health": "online", "last_seen_ms": 3},
+       "decided_by": "you@example.com", "first_seen_at": "2026-11-06T04:44:24.215Z",
+       "decided_at": "2026-11-06T04:44:25.752Z", "online": true, "health": "online",
+       "last_seen_at": "2026-11-06T04:44:42.225Z"},
       {"id": "33be", "public_key": "a1b2", "hostname": "db-1", "state": "approved",
        "online": false, "health": "offline"},
       {"id": "44cf", "public_key": "c3d4", "hostname": "new", "state": "pending", "online": false},
@@ -52,9 +53,9 @@ let hostsJSON = """
        "online": false},
       {"id": "fleet", "public_key": "", "hostname": "Fleet", "state": "approved", "online": false},
       {"id": "55d0", "kind": "agentless", "public_key": "", "hostname": "orders-db",
-       "state": "approved", "online": true, "health": "online", "last_seen_ms": 3},
+       "state": "approved", "online": true, "health": "online", "last_seen_at": "2026-11-06T04:44:42Z"},
       {"id": "66e1", "kind": "agentless", "public_key": "", "hostname": "not-set-up-yet",
-       "state": "approved", "online": false, "health": "not_read", "last_seen_ms": null},
+       "state": "approved", "online": false, "health": "not_read", "last_seen_at": null},
       {"id": "77f2", "kind": "built_in", "public_key": "", "hostname": "MaxNines server",
        "state": "approved", "online": false, "health": "offline"}
     ]
@@ -67,7 +68,7 @@ func decoded() throws -> (Alerts, [MonitoredHost]) {
 }
 
 /// Just after the alerts above.
-let now = Date(timeIntervalSince1970: 1_793_940_300)
+let now = Client.moment("2026-11-06T04:45:00Z")!
 
 @Test func alertsAreReadAsTheServerSendsThem() throws {
     let (alerts, _) = try decoded()
@@ -84,6 +85,22 @@ let now = Date(timeIntervalSince1970: 1_793_940_300)
     #expect(second.isAcknowledged && second.isSilenced)
     // A severity this app has never heard of still shows.
     #expect(alerts.open[2].severity == .warning)
+}
+
+@Test func timesAreReadWithMillisecondsAndWithout() throws {
+    let (alerts, _) = try decoded()
+    // To the millisecond, which is as precise as the server keeps them.
+    let started = alerts.open[0].startedAt
+    #expect(abs(started.timeIntervalSince1970 - 1_793_940_279.545) < 0.0005)
+    // The server leaves the fraction out when the milliseconds are zero.
+    #expect(alerts.open[1].startedAt == Date(timeIntervalSince1970: 1_793_940_200))
+    #expect(alerts.open[0].resolvedAt == nil)
+    // Milliseconds since 1970, as older servers sent, aren't a time.
+    #expect(Client.moment("1793940279545") == nil)
+    #expect(throws: DecodingError.self) {
+        try Client.decoder.decode(Silence.self, from: Data(
+            #"{"id": 1, "filter": "", "series": "", "reason": "", "ends_at": 1793940279545}"#.utf8))
+    }
 }
 
 @Test func theOverviewPutsTheWorstFirstAndCountsRealHosts() throws {
@@ -108,7 +125,7 @@ let now = Date(timeIntervalSince1970: 1_793_940_300)
 }
 
 @Test func agesUseTheLargestWholeUnit() {
-    let ago = { (seconds: Int64) in age(sinceMs: now.milliseconds - seconds * 1000, now: now) }
+    let ago = { (seconds: TimeInterval) in age(since: now.addingTimeInterval(-seconds), now: now) }
     #expect(ago(0) == "0s")
     #expect(ago(59) == "59s")
     #expect(ago(60) == "1m")
@@ -160,7 +177,7 @@ let now = Date(timeIntervalSince1970: 1_793_940_300)
             #"""
             {"id": 11, "rule_id": 6, "rule_name": "Half the web hosts down", "severity": "critical",
              "host_id": "fleet", "hostname": "Fleet", "series": "", "summary": "Half down",
-             "started_ms": 1, "resolved_ms": null, "acknowledged_by": null, "silence_id": null,
+             "started_at": "2026-11-06T04:40:00Z", "resolved_at": null, "acknowledged_by": null, "silence_id": null,
              "maintenance_window_id": null}
             """#.utf8))
     #expect(try body(fleet) == #"{"duration_secs":3600,"reason":"Silenced from the menu bar","rule_id":6}"#)
@@ -176,17 +193,17 @@ let checksJSON = """
       {"id": 1, "host_id": "server", "check": {"name": "Home page", "kind": "http", "target": "https://example.com"},
        "interval_secs": 60, "enabled": true, "read_stats": false, "sign_in": "none",
        "has_password": false, "has_private_key": false,
-       "latest": {"up": true, "ran_ms": 1793940279545}},
+       "latest": {"up": true, "ran_at": "2026-11-06T04:44:39.545Z"}},
       {"id": 2, "host_id": "55d0", "check": {"name": "db", "kind": "postgres", "target": "db:5432"},
        "interval_secs": 60, "enabled": true, "read_stats": true, "extras": ["sizes"], "sign_in": "password",
        "username": "maxnines", "has_password": true, "has_private_key": false,
-       "latest": {"up": false, "ran_ms": 1793940279545, "error": "connection refused"}},
+       "latest": {"up": false, "ran_at": "2026-11-06T04:44:39.545Z", "error": "connection refused"}},
       {"id": 3, "host_id": "server", "check": {"name": "New", "kind": "tcp", "target": "a:1"},
        "interval_secs": 60, "enabled": true, "read_stats": false, "sign_in": "none",
        "has_password": false, "has_private_key": false, "latest": null},
       {"id": 4, "host_id": "server", "check": {"name": "Paused", "kind": "tcp", "target": "b:1"},
        "interval_secs": 60, "enabled": false, "read_stats": false, "sign_in": "none",
-       "has_password": false, "has_private_key": false, "latest": {"up": false, "ran_ms": 1}}
+       "has_password": false, "has_private_key": false, "latest": {"up": false, "ran_at": "2026-11-05T04:40:00Z"}}
     ]
     """
 
@@ -194,16 +211,16 @@ let silencesJSON = """
     {
       "active": [
         {"id": 3, "rule_id": null, "filter": "hostname=db*", "series": "", "reason": "Upgrading Postgres",
-         "created_by": "you@example.com", "starts_ms": 1793940000000, "ends_ms": 1793947479545},
+         "created_by": "you@example.com", "starts_at": "2026-11-06T04:40:00Z", "ends_at": "2026-11-06T06:44:39.545Z"},
         {"id": 4, "rule_id": 1, "filter": "id=22ad", "series": "", "reason": "Known",
-         "created_by": "you@example.com", "starts_ms": 1793940000000, "ends_ms": 1793941800000},
+         "created_by": "you@example.com", "starts_at": "2026-11-06T04:40:00Z", "ends_at": "2026-11-06T05:10:00Z"},
         {"id": 5, "rule_id": 99, "filter": "", "series": "nginx.service", "reason": "Gone rule",
-         "created_by": "you@example.com", "starts_ms": 1793940000000, "ends_ms": 1793950000000},
+         "created_by": "you@example.com", "starts_at": "2026-11-06T04:40:00Z", "ends_at": "2026-11-06T07:26:40Z"},
         {"id": 6, "rule_id": null, "filter": "", "series": "", "reason": "Everything",
-         "created_by": "you@example.com", "starts_ms": 1793940000000, "ends_ms": 1793960000000}
+         "created_by": "you@example.com", "starts_at": "2026-11-06T04:40:00Z", "ends_at": "2026-11-06T10:13:20Z"}
       ],
       "ended": [{"id": 1, "rule_id": null, "filter": "", "series": "", "reason": "Old",
-                 "created_by": "you@example.com", "starts_ms": 1, "ends_ms": 2}]
+                 "created_by": "you@example.com", "starts_at": "2026-11-05T04:40:00Z", "ends_at": "2026-11-05T05:40:00Z"}]
     }
     """
 
@@ -249,24 +266,24 @@ let silencesJSON = """
 }
 
 @Test func timeLeftRoundsUpAndNeverGoesNegative() {
-    let left = { (seconds: Int64) in timeLeft(untilMs: now.milliseconds + seconds * 1000, now: now) }
+    let left = { (seconds: TimeInterval) in timeLeft(until: now.addingTimeInterval(seconds), now: now) }
     #expect(left(25 * 60) == "25m")
     #expect(left(90) == "1m")
     #expect(left(3 * 3600) == "3h")
     #expect(left(-10) == "0s")
-    #expect(timeLeft(untilMs: now.milliseconds + 1, now: now) == "1s")
+    #expect(left(0.001) == "1s")
 }
 
 // MARK: Notifications
 
 func alert(
     _ id: Int, _ severity: Severity, silenced: Bool = false, acknowledged: Bool = false,
-    resolvedMs: Int64? = nil, resolvedSummary: String? = nil
+    resolvedAt: String? = nil, resolvedSummary: String? = nil
 ) -> ServerAlert {
     let json = """
         {"id": \(id), "rule_id": 1, "rule_name": "Rule \(id)", "severity": "\(severity.rawValue)",
          "host_id": "h\(id)", "hostname": "host-\(id)", "summary": "Alert \(id)",
-         "started_ms": 1793940000000, "resolved_ms": \(resolvedMs.map(String.init) ?? "null"),
+         "started_at": "2026-11-06T04:40:00Z", "resolved_at": \(resolvedAt.map { "\"\($0)\"" } ?? "null"),
          "resolved_summary": \(resolvedSummary.map { "\"\($0)\"" } ?? "null"),
          "acknowledged_by": \(acknowledged ? "\"sam@example.com\"" : "null"),
          "silence_id": \(silenced ? "1" : "null"), "maintenance_window_id": null}
@@ -320,9 +337,9 @@ let everything = NotifyWhen(critical: true, warnings: true, resolved: true)
     let new = Alerts(
         open: [],
         resolved: [
-            alert(1, .critical, resolvedMs: 1793940180000, resolvedSummary: "host-1 is back online"),
-            alert(3, .critical, resolvedMs: 1793940180000, resolvedSummary: "host-3 is back online"),
-            alert(4, .warning, resolvedMs: 1793940060000),
+            alert(1, .critical, resolvedAt: "2026-11-06T04:43:00Z", resolvedSummary: "host-1 is back online"),
+            alert(3, .critical, resolvedAt: "2026-11-06T04:43:00Z", resolvedSummary: "host-3 is back online"),
+            alert(4, .warning, resolvedAt: "2026-11-06T04:41:00Z"),
         ])
     let all = notices(from: old, to: new, when: everything, now: now)
     // The second just went, which the server doesn't call resolved, and the
@@ -350,7 +367,7 @@ let everything = NotifyWhen(critical: true, warnings: true, resolved: true)
     #expect(notices(from: old, to: warnings, when: everything, now: now)[0].title == "🟡 5 alerts started")
     let over = notices(
         from: new,
-        to: Alerts(open: [], resolved: (1...5).map { alert($0, .critical, resolvedMs: 1793940180000) }),
+        to: Alerts(open: [], resolved: (1...5).map { alert($0, .critical, resolvedAt: "2026-11-06T04:43:00Z") }),
         when: everything, now: now)
     #expect(over.map(\.title) == ["🟢 5 alerts resolved"])
     // Three at once are each shown.

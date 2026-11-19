@@ -75,7 +75,7 @@ final class Store: ObservableObject {
             self?.act({ try await $0.acknowledge(alertID: alert) }) { problem in
                 self?.notifier.post(
                     Notice(
-                        id: "acknowledge-failed-\(alert)-\(Date().milliseconds)",
+                        id: "acknowledge-failed-\(alert)-\(UUID().uuidString)",
                         title: "Couldn't acknowledge the alert",
                         body: problem,
                         acknowledges: nil,

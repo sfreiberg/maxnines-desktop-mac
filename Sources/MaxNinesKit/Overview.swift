@@ -13,7 +13,7 @@ public struct Overview: Equatable, Sendable {
     /// Silences running now, ending soonest first.
     public let silences: [SilenceRow]
 
-    static let recently: Int64 = 3_600_000
+    static let recently: TimeInterval = 3600
     /// More than this many resolved alerts is a list nobody reads.
     static let mostResolved = 5
 
@@ -23,13 +23,13 @@ public struct Overview: Equatable, Sendable {
     ) {
         firing = alerts.open.sorted { left, right in
             left.severity != right.severity
-                ? left.severity > right.severity : left.startedMs > right.startedMs
+                ? left.severity > right.severity : left.startedAt > right.startedAt
         }
-        let since = now.milliseconds - Overview.recently
+        let since = now.addingTimeInterval(-Overview.recently)
         resolved = Array(
             alerts.resolved
-                .filter { ($0.resolvedMs ?? 0) >= since }
-                .sorted { ($0.resolvedMs ?? 0) > ($1.resolvedMs ?? 0) }
+                .filter { ($0.resolvedAt ?? .distantPast) >= since }
+                .sorted { ($0.resolvedAt ?? .distantPast) > ($1.resolvedAt ?? .distantPast) }
                 .prefix(Overview.mostResolved))
         let counted = hosts.filter(\.isCounted)
         self.hosts = counted.count
@@ -43,7 +43,7 @@ public struct Overview: Equatable, Sendable {
             }
         }
         self.silences = silences
-            .sorted { $0.endsMs < $1.endsMs }
+            .sorted { $0.endsAt < $1.endsAt }
             .map { SilenceRow($0, rules: rules, hosts: hosts) }
     }
 
@@ -92,12 +92,12 @@ public struct SilenceRow: Equatable, Identifiable, Sendable {
     public let reason: String
     /// What it keeps quiet, such as `High CPU on web-1`.
     public let covers: String
-    public let endsMs: Int64
+    public let endsAt: Date
 
     init(_ silence: Silence, rules: [Int: String], hosts: [MonitoredHost]) {
         id = silence.id
         reason = silence.reason
-        endsMs = silence.endsMs
+        endsAt = silence.endsAt
         var what: [String] = []
         if let rule = silence.ruleId {
             what.append(rules[rule] ?? "One alert rule")
@@ -114,18 +114,15 @@ public struct SilenceRow: Equatable, Identifiable, Sendable {
     }
 }
 
-public extension Date {
-    var milliseconds: Int64 { Int64((timeIntervalSince1970 * 1000).rounded()) }
-}
-
 /// How long ago something was, in the largest whole unit, such as `4m` or `2h`.
-public func age(sinceMs then: Int64, now: Date = Date()) -> String {
-    span(seconds: (now.milliseconds - then) / 1000)
+public func age(since then: Date, now: Date = Date()) -> String {
+    span(seconds: Int64(now.timeIntervalSince(then)))
 }
 
-/// How long until something happens, in the same units as `age`.
-public func timeLeft(untilMs then: Int64, now: Date = Date()) -> String {
-    span(seconds: (then - now.milliseconds + 999) / 1000)
+/// How long until something happens, in the same units as `age`. Part of a
+/// second counts as a whole one, so what hasn't happened yet never says `0s`.
+public func timeLeft(until then: Date, now: Date = Date()) -> String {
+    span(seconds: Int64(then.timeIntervalSince(now).rounded(.up)))
 }
 
 func span(seconds: Int64) -> String {

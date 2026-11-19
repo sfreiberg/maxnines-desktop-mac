@@ -72,11 +72,11 @@ struct PopoverView: View {
         guard store.isSetUp else { return store.problem ?? "Not signed in" }
         let server = URL(string: store.address)?.host() ?? store.address
         if let problem = store.problem {
-            let since = store.updated.map { ", last heard \(age(sinceMs: $0.milliseconds, now: now)) ago" }
+            let since = store.updated.map { ", last heard \(age(since: $0, now: now)) ago" }
             return "\(problem)\(since ?? "")"
         }
         guard let updated = store.updated else { return server }
-        return "\(server) · updated \(age(sinceMs: updated.milliseconds, now: now)) ago"
+        return "\(server) · updated \(age(since: updated, now: now)) ago"
     }
 
     private func counts(_ overview: Overview) -> some View {
@@ -302,7 +302,7 @@ private struct FiringRow: View {
     }
 
     private var detail: String {
-        var parts = [alert.ruleName, age(sinceMs: alert.startedMs, now: now)]
+        var parts = [alert.ruleName, age(since: alert.startedAt, now: now)]
         if let who = alert.acknowledgedBy {
             parts.append("acknowledged by \(who)")
         }
@@ -336,7 +336,7 @@ private struct SilenceRowView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .buttonStyle(.plain)
-                Text("\(silence.covers) · ends in \(timeLeft(untilMs: silence.endsMs, now: now))")
+                Text("\(silence.covers) · ends in \(timeLeft(until: silence.endsAt, now: now))")
                     .font(Theme.detail)
                     .foregroundStyle(Theme.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -371,7 +371,7 @@ private struct ResolvedRow: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .buttonStyle(.plain)
-                Text("\(alert.ruleName) · \(age(sinceMs: alert.resolvedMs ?? alert.startedMs, now: now)) ago")
+                Text("\(alert.ruleName) · \(age(since: alert.resolvedAt ?? alert.startedAt, now: now)) ago")
                     .font(Theme.detail)
                     .foregroundStyle(Theme.muted)
             }

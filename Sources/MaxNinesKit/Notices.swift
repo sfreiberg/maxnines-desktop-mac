@@ -77,7 +77,7 @@ public func notices(from old: Alerts, to new: Alerts, when: NotifyWhen, now: Dat
             // Only what the server says has resolved: one that's just gone, as
             // when its host was deleted, isn't news worth telling.
             guard let done = resolved[alert.id] else { continue }
-            let lasted = age(sinceMs: done.startedMs, now: Date(milliseconds: done.resolvedMs ?? now.milliseconds))
+            let lasted = age(since: done.startedAt, now: done.resolvedAt ?? now)
             // Where things stand now, so it doesn't read as the problem again. One
             // closed for another reason has only what was wrong, said as past.
             let outcome = done.resolvedSummary ?? "Was: \(done.summary)"
@@ -121,10 +121,4 @@ private func gathered(_ notices: [Notice], _ title: String) -> [Notice] {
 /// The page an alert opens: its host's.
 public func page(_ alert: ServerAlert) -> String {
     "/hosts/\(alert.hostId)"
-}
-
-public extension Date {
-    init(milliseconds: Int64) {
-        self.init(timeIntervalSince1970: Double(milliseconds) / 1000)
-    }
 }

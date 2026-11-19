@@ -33,8 +33,8 @@ public struct ServerAlert: Decodable, Identifiable, Equatable, Sendable {
     public let series: String?
     /// What was wrong, as it said when it fired.
     public let summary: String
-    public let startedMs: Int64
-    public let resolvedMs: Int64?
+    public let startedAt: Date
+    public let resolvedAt: Date?
     /// Where things stood as it cleared, such as "web-1 is back online". Missing
     /// for one closed for another reason, such as its rule being deleted, and from
     /// older servers.
@@ -76,7 +76,7 @@ public struct Silence: Decodable, Identifiable, Equatable, Sendable {
     /// One series alone, such as a check's name. Empty for all.
     public let series: String
     public let reason: String
-    public let endsMs: Int64
+    public let endsAt: Date
 }
 
 /// What `GET /api/v1/silences` returns. Ones that have ended aren't used.

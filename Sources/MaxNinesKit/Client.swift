@@ -148,8 +148,26 @@ public struct Client: Sendable {
     static let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let value = try decoder.singleValueContainer()
+            let text = try value.decode(String.self)
+            guard let date = Client.moment(text) else {
+                throw DecodingError.dataCorruptedError(
+                    in: value, debugDescription: "\(text) isn't an ISO 8601 time")
+            }
+            return date
+        }
         return decoder
     }()
+
+    /// A moment as the server gives it, an ISO 8601 time in UTC such as
+    /// `2026-11-19T01:57:17.828Z`. The server leaves the fraction out when the
+    /// milliseconds are zero, and a format that expects a fraction won't read a
+    /// time without one, nor the other way round, so both are tried.
+    static func moment(_ text: String) -> Date? {
+        let withMilliseconds = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
+        return (try? withMilliseconds.parse(text)) ?? (try? Date.ISO8601FormatStyle().parse(text))
+    }
 
     public func alerts() async throws -> Alerts {
         try await get("alerts")
