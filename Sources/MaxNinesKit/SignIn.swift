@@ -196,6 +196,13 @@ public struct SignInEndpoints: Sendable {
         guard status == 200 else { throw ClientError.status(status) }
     }
 
+    /// Signs out tokens nothing will use, as from a sign in cancelled once the
+    /// server had given them, so no sign in is left on the server that nothing
+    /// here holds. It's seen through even when what's waiting for it is cancelled.
+    public func revoke(unwanted tokens: Tokens) async throws {
+        try await Task { try await self.revoke(tokens.refreshToken) }.value
+    }
+
     private func post(_ path: String, _ fields: [(String, String)]) async throws -> Tokens {
         let (data, status) = try await send(path, fields)
         guard status == 200 else {

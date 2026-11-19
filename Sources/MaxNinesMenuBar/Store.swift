@@ -149,7 +149,15 @@ final class Store: ObservableObject {
                 let tokens = try await signInThroughBrowser(
                     server: server, device: Store.computerName,
                     open: { url in await MainActor.run { _ = NSWorkspace.shared.open(url) } })
-                guard signIns == attempt else { return }
+                guard signIns == attempt else {
+                    // Cancelled or started again once the server had signed the app in.
+                    do {
+                        try await SignInEndpoints(server: server).revoke(unwanted: tokens)
+                    } catch {
+                        signInProblem = SignInError.cancelledNotRevoked.localizedDescription
+                    }
+                    return
+                }
                 // Kept before anything uses it.
                 Keychain.setRefreshToken(tokens.refreshToken)
                 Keychain.forgetAPIKey()

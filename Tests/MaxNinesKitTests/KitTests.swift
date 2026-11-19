@@ -938,6 +938,54 @@ func browser(answering answer: @escaping @Sendable ([String: String]) -> String,
     }
 }
 
+/// Signs in through the browser and cancels it while the server is swapping
+/// the approval for tokens. Gives back what it threw, the requests the server
+/// had, and the page the browser showed.
+func signInCancelledMidSwap(revokeWorks: Bool) async throws -> (Error?, [URLRequest], String) {
+    let swapping = Gate()
+    let cancelled = Gate()
+    let server = FakeServer { request in
+        if request.url?.path == "/oauth/revoke" {
+            // Not cancelled with the sign in, or it couldn't be sent.
+            try Task.checkCancellation()
+            if revokeWorks { return (200, "") }
+            throw URLError(.cannotConnectToHost)
+        }
+        await swapping.open()
+        await cancelled.wait()
+        // As URLSession does, a request whose task has been cancelled fails.
+        try Task.checkCancellation()
+        return (200, tokensJSON("mxa_1", "mxr_1"))
+    }
+    let (open, visit) = browser(answering: { "code=mxc_1&state=\($0["state"] ?? "")" }, asked: Box([:]))
+    let signingIn = Task {
+        try await signInThroughBrowser(server: testServer, device: "Mac", open: open, transport: server.transport)
+    }
+    await swapping.wait()
+    signingIn.cancel()
+    await cancelled.open()
+    var thrown: Error?
+    do {
+        _ = try await signingIn.value
+    } catch {
+        thrown = error
+    }
+    let (_, page) = try await #require(visit.value).value
+    return (thrown, server.requests.value, page)
+}
+
+@Test func signingInCancelledWhileTheApprovalIsSwappedRevokesWhatTheServerGave() async throws {
+    let (thrown, requests, page) = try await signInCancelledMidSwap(revokeWorks: true)
+    #expect(thrown is CancellationError)
+    #expect(requests.map(\.url?.path) == ["/oauth/token", "/oauth/revoke"])
+    #expect(form(requests[1])["token"] == "mxr_1")
+    #expect(page.contains("Signing in was cancelled in the app"))
+
+    // If the server can't be told, the person is, so they can revoke it there.
+    let (unrevoked, _, _) = try await signInCancelledMidSwap(revokeWorks: false)
+    #expect(unrevoked as? SignInError == .cancelledNotRevoked)
+}
+
 @Test func signingInCanBeCancelled() async throws {
     let opened = Box(false)
     let server = FakeServer { _ in (500, "") }

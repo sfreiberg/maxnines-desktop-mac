@@ -9,12 +9,17 @@ public enum SignInError: Error, Equatable, LocalizedError {
     case failed(String)
     /// Nothing came back from the browser in time.
     case timedOut
+    /// Cancelled once the server had signed the app in, and the server couldn't
+    /// then be told to sign it out.
+    case cancelledNotRevoked
 
     public var errorDescription: String? {
         switch self {
         case .denied: "You chose Deny, so the app isn't signed in"
         case .failed(let error): "The server couldn't ask you to sign in (\(error))"
         case .timedOut: "Nothing came back from the browser, so the app isn't signed in. Try again"
+        case .cancelledNotRevoked:
+            "Signing in was cancelled, but the server couldn't be told. Revoke it in MaxNines under Settings, then Signed-in apps"
         }
     }
 }
@@ -22,7 +27,8 @@ public enum SignInError: Error, Equatable, LocalizedError {
 /// Signs in through the browser: listens on this Mac for the browser to come
 /// back, has `open` show the person the server's approval page, swaps the
 /// approval for tokens, and tells the person in the browser how it went.
-/// Gives up after `timeout`, or when the task is cancelled.
+/// Gives up after `timeout` without an answer from the browser, or when the task
+/// is cancelled.
 public func signInThroughBrowser(
     server: ServerAddress, device: String, open: @escaping @Sendable (URL) async -> Void,
     transport: @escaping Transport = urlSessionTransport, timeout: Duration = .seconds(300)
@@ -33,7 +39,7 @@ public func signInThroughBrowser(
     let signIn = BrowserSignIn(server: server, port: port, device: device)
     let endpoints = SignInEndpoints(server: server, transport: transport)
     await open(signIn.authorizeURL)
-    return try await withTimeout(timeout) {
+    let (request, answer) = try await withTimeout(timeout) {
         for try await request in loopback.requests {
             // Anything else the browser asks for, such as an icon, or an answer
             // to some other request, isn't the one being waited for.
@@ -41,23 +47,34 @@ public func signInThroughBrowser(
                 request.respond(status: 404, page: resultPage("Not found", ""))
                 continue
             }
-            do {
-                switch answer {
-                case .denied: throw SignInError.denied
-                case .failed(let error): throw SignInError.failed(error)
-                case .code(let code):
-                    let tokens = try await endpoints.tokens(code: code, signIn: signIn)
-                    request.respond(status: 200, page: resultPage("Signed in to MaxNines", "You can close this tab."))
-                    return tokens
-                }
-            } catch {
-                request.respond(
-                    status: 200,
-                    page: resultPage("Not signed in", "\(error.localizedDescription). You can close this tab."))
-                throw error
-            }
+            return (request, answer)
         }
         throw CancellationError()
+    }
+    do {
+        switch answer {
+        case .denied: throw SignInError.denied
+        case .failed(let error): throw SignInError.failed(error)
+        case .code(let code):
+            // Once the server has the code it may give tokens, so the swap is seen
+            // through even if signing in is cancelled meanwhile, and what it gives
+            // is then revoked, so nothing is left signed in that nothing here holds.
+            let tokens = try await Task { try await endpoints.tokens(code: code, signIn: signIn) }.value
+            if Task.isCancelled {
+                do {
+                    try await endpoints.revoke(unwanted: tokens)
+                } catch {
+                    throw SignInError.cancelledNotRevoked
+                }
+                throw CancellationError()
+            }
+            request.respond(status: 200, page: resultPage("Signed in to MaxNines", "You can close this tab."))
+            return tokens
+        }
+    } catch {
+        let why = error is CancellationError ? "Signing in was cancelled in the app" : error.localizedDescription
+        request.respond(status: 200, page: resultPage("Not signed in", "\(why). You can close this tab."))
+        throw error
     }
 }
 
