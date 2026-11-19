@@ -270,7 +270,7 @@ private struct FiringRow: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Button {
-                    store.open("/hosts/\(alert.hostId)")
+                    store.open(page(alert))
                 } label: {
                     Text(alert.summary)
                         .font(.system(size: 13, weight: .medium))
@@ -362,7 +362,7 @@ private struct ResolvedRow: View {
                 .accessibilityLabel("Resolved")
             VStack(alignment: .leading, spacing: 3) {
                 Button {
-                    store.open("/hosts/\(alert.hostId)")
+                    store.open(page(alert))
                 } label: {
                     Text(alert.saysNow)
                         .font(.system(size: 13))

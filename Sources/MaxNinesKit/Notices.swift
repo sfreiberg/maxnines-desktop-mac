@@ -118,7 +118,8 @@ private func gathered(_ notices: [Notice], _ title: String) -> [Notice] {
     ]
 }
 
-/// The page an alert opens: its host's.
+/// The page an alert opens: its own on the server, which every alert has, whether
+/// it's about one host, a group of them or the server itself.
 public func page(_ alert: ServerAlert) -> String {
-    "/hosts/\(alert.hostId)"
+    "/alerts/\(alert.id)"
 }

@@ -118,6 +118,15 @@ let now = Client.moment("2026-11-06T04:45:00Z")!
     #expect(overview.hostsOnline == 2)
 }
 
+@Test func everyAlertOpensItsOwnPage() throws {
+    let (alerts, _) = try decoded()
+    // One about a host, about a group of hosts, and the resolved, all on the
+    // server's own page for the alert, as a host page has none for the group.
+    #expect(alerts.open.map(page) == ["/alerts/7", "/alerts/9", "/alerts/10"])
+    #expect(page(alerts.resolved[0]) == "/alerts/5")
+    #expect(testServer.page(page(alerts.open[1])).absoluteString == "https://monitor.example.com/alerts/9")
+}
+
 @Test func nothingFiringSaysSo() {
     let overview = Overview(alerts: Alerts(open: [], resolved: []), hosts: [], now: now)
     #expect(overview.headline == "Nothing firing")
@@ -303,7 +312,7 @@ let everything = NotifyWhen(critical: true, warnings: true, resolved: true)
     #expect(all.map(\.title) == ["🔴 Critical: Rule 2", "🟡 Warning: Rule 3"])
     #expect(all[0].body == "Alert 2")
     #expect(all[0].acknowledges == 2)
-    #expect(all[0].path == "/hosts/h2")
+    #expect(all[0].path == "/alerts/2")
 
     let criticalOnly = NotifyWhen(critical: true, warnings: false, resolved: false)
     #expect(notices(from: old, to: new, when: criticalOnly, now: now).map(\.title) == ["🔴 Critical: Rule 2"])
