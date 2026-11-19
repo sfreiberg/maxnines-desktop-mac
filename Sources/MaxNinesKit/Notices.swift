@@ -40,12 +40,46 @@ public struct Notice: Equatable, Sendable {
 /// bury the screen.
 let mostNotices = 3
 
-/// What's worth a notification between what the server listed last time and
-/// now. The first time there's no last time, and nothing is: what was already
-/// firing when the app started isn't news.
-///
-/// Silenced alerts stay quiet, as they do everywhere else in MaxNines.
+/// Works out notifications from each list of alerts the server gives, keeping
+/// what that needs from one to the next.
+public struct AlertWatch: Sendable {
+    /// What the server listed last time. Nothing until the first answer.
+    private var last: Alerts?
+    /// Open alerts the person has heard of: ones that weren't silenced at some
+    /// time they were listed.
+    private var told: Set<Int> = []
+
+    public init() {}
+
+    /// What's worth a notification since the last list. The first time there's
+    /// no last list, and nothing is: what was already firing when the app started
+    /// isn't news.
+    public mutating func notices(for alerts: Alerts, when: NotifyWhen, now: Date = Date()) -> [Notice] {
+        defer {
+            last = alerts
+            let open = Set(alerts.open.map(\.id))
+            told = told.intersection(open).union(alerts.open.filter { !$0.isSilenced }.map(\.id))
+        }
+        guard let last else { return [] }
+        return MaxNinesKit.notices(from: last, to: alerts, told: told, when: when, now: now)
+    }
+}
+
+/// What's worth a notification between `old` and `new`, when the person has
+/// heard of the alerts in `old` that weren't silenced.
 public func notices(from old: Alerts, to new: Alerts, when: NotifyWhen, now: Date = Date()) -> [Notice] {
+    notices(from: old, to: new, told: Set(old.open.filter { !$0.isSilenced }.map(\.id)), when: when, now: now)
+}
+
+/// What's worth a notification between `old` and `new`. `told` is the open
+/// alerts the person has heard of.
+///
+/// Silenced alerts stay quiet, as they do everywhere else in MaxNines, except
+/// that anyone who has heard of an alert hears when it ends, even if it was
+/// silenced since, as the server's own notifications do.
+public func notices(from old: Alerts, to new: Alerts, told: Set<Int>, when: NotifyWhen, now: Date = Date())
+    -> [Notice]
+{
     let before = Dictionary(old.open.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
     let still = Set(new.open.map(\.id))
 
@@ -73,7 +107,7 @@ public func notices(from old: Alerts, to new: Alerts, when: NotifyWhen, now: Dat
     var ended: [Notice] = []
     if when.resolved {
         let resolved = Dictionary(new.resolved.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        for alert in old.open where !still.contains(alert.id) && !alert.isSilenced {
+        for alert in old.open where !still.contains(alert.id) && told.contains(alert.id) {
             // Only what the server says has resolved: one that's just gone, as
             // when its host was deleted, isn't news worth telling.
             guard let done = resolved[alert.id] else { continue }

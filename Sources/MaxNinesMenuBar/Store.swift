@@ -30,10 +30,8 @@ final class Store: ObservableObject {
     /// again doesn't say it's finished.
     private var signIns = 0
     private var polling: Task<Void, Never>?
-    /// The alerts the server listed last time, which notifications are worked
-    /// out against. Nothing until the first answer, so what was already firing
-    /// isn't announced.
-    private var lastAlerts: Alerts?
+    /// What notifications are worked out against.
+    private var watch = AlertWatch()
     /// Counts each sign in, sign out and change of settings, so an answer to the
     /// old ones is dropped.
     private var connection = 0
@@ -208,7 +206,7 @@ final class Store: ObservableObject {
         overview = nil
         updated = nil
         // Another server's alerts aren't news about this one's.
-        lastAlerts = nil
+        watch = AlertWatch()
         connection += 1
         client = nil
         tokens = nil
@@ -263,12 +261,9 @@ final class Store: ObservableObject {
             overview = Overview(alerts: alerts, hosts: hosts, checks: checks, silences: silences?.active ?? [])
             updated = Date()
             problem = nil
-            if let lastAlerts {
-                for notice in notices(from: lastAlerts, to: alerts, when: notifyWhen) {
-                    notifier.post(notice)
-                }
+            for notice in watch.notices(for: alerts, when: notifyWhen) {
+                notifier.post(notice)
             }
-            lastAlerts = alerts
         } catch {
             // Cancelled because the settings changed, or overtaken by a later
             // answer, it says nothing about the server now.

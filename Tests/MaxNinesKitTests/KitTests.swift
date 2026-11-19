@@ -369,6 +369,25 @@ let everything = NotifyWhen(critical: true, warnings: true, resolved: true)
     #expect(notices(from: old, to: new, when: NotifyWhen(critical: true, warnings: true, resolved: false)).isEmpty)
 }
 
+@Test func anAlertSilencedAfterItWasToldOfStillSaysWhenItEnds() {
+    var watch = AlertWatch()
+    let firing = Alerts(open: [alert(1, .critical), alert(2, .critical, silenced: true)], resolved: [])
+    // What was firing when the app started isn't news.
+    #expect(watch.notices(for: firing, when: everything, now: now).isEmpty)
+    let silenced = Alerts(open: [alert(1, .critical, silenced: true), alert(2, .critical, silenced: true)], resolved: [])
+    #expect(watch.notices(for: silenced, when: everything, now: now).isEmpty)
+    #expect(watch.notices(for: silenced, when: everything, now: now).isEmpty)
+    let ended = Alerts(
+        open: [],
+        resolved: [
+            alert(1, .critical, resolvedAt: "2026-11-06T04:43:00Z"),
+            alert(2, .critical, resolvedAt: "2026-11-06T04:43:00Z"),
+        ])
+    // The first was heard of before it was silenced, and the second never was.
+    #expect(watch.notices(for: ended, when: everything, now: now).map(\.title) == ["🟢 Resolved: Rule 1"])
+    #expect(watch.notices(for: ended, when: everything, now: now).isEmpty)
+}
+
 @Test func aStormBecomesOneNotification() {
     let old = Alerts(open: [], resolved: [])
     let new = Alerts(open: (1...5).map { alert($0, .critical) }, resolved: [])
