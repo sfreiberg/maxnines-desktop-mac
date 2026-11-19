@@ -6,7 +6,7 @@ import Foundation
 /// brings an approval back to this Mac, which the app swaps for tokens.
 
 /// What the server knows this app as.
-public let clientID = "maxnines-menubar"
+public let clientID = "maxnines-desktop-mac"
 
 /// The most the app asks for: enough to acknowledge and silence. The person can
 /// choose less.

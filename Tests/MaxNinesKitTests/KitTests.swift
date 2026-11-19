@@ -472,7 +472,7 @@ let testServer = try! ServerAddress("https://monitor.example.com")
     #expect(
         fields(url.query ?? "") == [
             "response_type": "code",
-            "client_id": "maxnines-menubar",
+            "client_id": "maxnines-desktop-mac",
             "redirect_uri": "http://127.0.0.1:53682/callback",
             "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
             "code_challenge_method": "S256",
@@ -515,7 +515,7 @@ let testServer = try! ServerAddress("https://monitor.example.com")
     #expect(
         form(request) == [
             "grant_type": "authorization_code",
-            "client_id": "maxnines-menubar",
+            "client_id": "maxnines-desktop-mac",
             "code": "mxc_1",
             "redirect_uri": "http://127.0.0.1:53682/callback",
             "code_verifier": signIn.pkce.verifier,
@@ -535,7 +535,7 @@ let testServer = try! ServerAddress("https://monitor.example.com")
     #expect(OAuthError.said("invalid_grant", "That code is wrong").localizedDescription == "That code is wrong")
     // A refresh token that doesn't work means signing in again.
     await #expect(throws: ClientError.signedOut) { try await endpoints.refresh("mxr_1") }
-    #expect(form(server.requests.value[1]) == ["grant_type": "refresh_token", "client_id": "maxnines-menubar", "refresh_token": "mxr_1"])
+    #expect(form(server.requests.value[1]) == ["grant_type": "refresh_token", "client_id": "maxnines-desktop-mac", "refresh_token": "mxr_1"])
 
     said.value = (500, "oops")
     await #expect(throws: ClientError.status(500)) { try await endpoints.refresh("mxr_1") }
@@ -546,7 +546,7 @@ let testServer = try! ServerAddress("https://monitor.example.com")
     try await endpoints.revoke("mxr_1")
     let revoke = try #require(server.requests.value.last)
     #expect(revoke.url?.path == "/oauth/revoke")
-    #expect(form(revoke) == ["client_id": "maxnines-menubar", "token": "mxr_1"])
+    #expect(form(revoke) == ["client_id": "maxnines-desktop-mac", "token": "mxr_1"])
 }
 
 /// A holder for `server`, which keeps what it saves in `saved`. It doesn't try a
