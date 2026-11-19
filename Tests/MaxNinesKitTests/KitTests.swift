@@ -278,6 +278,25 @@ let silencesJSON = """
     #expect(overview.silences[0].reason == "Known")
 }
 
+@Test func extrasStayThroughAMomentsTroubleButNotWhenTheServerWontGiveThem() throws {
+    let before = [3, 4]
+    #expect(extra(.success([5]), before: before) == [5])
+    // Asking failed for the moment, so what was there still is, as far as is known.
+    for passing: Error in [URLError(.timedOut), URLError(.notConnectedToInternet), ClientError.status(502)] {
+        #expect(extra(Result<[Int], Error>.failure(passing), before: before) == before)
+    }
+    // A server too old to list them, or a sign in not allowed to see them.
+    for lasting: Error in [ClientError.status(404), ClientError.notAllowed(nil), ClientError.notMaxNines] {
+        #expect(extra(Result<[Int], Error>.failure(lasting), before: before) == nil)
+    }
+
+    // Kept a while, a silence that's since ended isn't shown.
+    let (alerts, hosts) = try decoded()
+    let silences = try Client.decoder.decode(Silences.self, from: Data(silencesJSON.utf8)).active
+    let later = Overview(alerts: alerts, hosts: hosts, silences: silences, now: now.addingTimeInterval(3600))
+    #expect(later.silences.map(\.id) == [3, 5, 6])
+}
+
 @Test func timeLeftRoundsUpAndNeverGoesNegative() {
     let left = { (seconds: TimeInterval) in timeLeft(until: now.addingTimeInterval(seconds), now: now) }
     #expect(left(25 * 60) == "25m")

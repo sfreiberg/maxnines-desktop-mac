@@ -42,7 +42,9 @@ public struct Overview: Equatable, Sendable {
                 rules[rule] = alert.ruleName
             }
         }
+        // Ones listed a while ago, kept while the server can't be asked, may have ended.
         self.silences = silences
+            .filter { $0.endsAt > now }
             .sorted { $0.endsAt < $1.endsAt }
             .map { SilenceRow($0, rules: rules, hosts: hosts) }
     }
@@ -63,6 +65,23 @@ public struct Overview: Equatable, Sendable {
             parts.append(warnings == 1 ? "1 warning" : "\(warnings) warnings")
         }
         return parts.isEmpty ? "Nothing firing" : parts.joined(separator: ", ")
+    }
+}
+
+/// What to show of something extra the server is asked for, such as its checks:
+/// what it gave, nothing when it can't or won't give it, and what it gave before
+/// when asking failed for some other reason, so a moment's trouble doesn't make
+/// it vanish.
+public func extra<Value>(_ asked: Result<Value, Error>, before: Value?) -> Value? {
+    switch asked {
+    case .success(let value):
+        return value
+    case .failure(let error):
+        switch error as? ClientError {
+        // Too old to list it, or not letting this sign in see it.
+        case .status(404), .notAllowed, .notMaxNines: return nil
+        default: return before
+        }
     }
 }
 

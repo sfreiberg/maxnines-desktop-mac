@@ -32,6 +32,10 @@ final class Store: ObservableObject {
     private var polling: Task<Void, Never>?
     /// What notifications are worked out against.
     private var watch = AlertWatch()
+    /// The checks and silences the server listed last, kept for when asking for
+    /// them again fails.
+    private var lastChecks: [RemoteCheck]?
+    private var lastSilences: Silences?
     /// Counts each sign in, sign out and change of settings, so an answer to the
     /// old ones is dropped.
     private var connection = 0
@@ -207,6 +211,8 @@ final class Store: ObservableObject {
         updated = nil
         // Another server's alerts aren't news about this one's.
         watch = AlertWatch()
+        lastChecks = nil
+        lastSilences = nil
         connection += 1
         client = nil
         tokens = nil
@@ -252,12 +258,16 @@ final class Store: ObservableObject {
             async let hostsAsked = client.hosts()
             // Checks and silences are extras: a server too old to list them, or
             // a sign in not allowed to, still shows its alerts.
-            async let checksAsked = try? client.remoteChecks()
-            async let silencesAsked = try? client.silences()
+            async let checksAsked = outcome { try await client.remoteChecks() }
+            async let silencesAsked = outcome { try await client.silences() }
             let (alerts, hosts) = try await (alertsAsked, hostsAsked)
-            let (checks, silences) = await (checksAsked, silencesAsked)
+            let (checksGot, silencesGot) = await (checksAsked, silencesAsked)
             guard current() else { return }
             answered = ask
+            let checks = extra(checksGot, before: lastChecks)
+            let silences = extra(silencesGot, before: lastSilences)
+            lastChecks = checks
+            lastSilences = silences
             overview = Overview(alerts: alerts, hosts: hosts, checks: checks, silences: silences?.active ?? [])
             updated = Date()
             problem = nil
@@ -321,6 +331,15 @@ final class Store: ObservableObject {
         if let client {
             NSWorkspace.shared.open(client.page(path))
         }
+    }
+}
+
+/// How `work` went.
+private func outcome<Value>(_ work: () async throws -> Value) async -> Result<Value, Error> {
+    do {
+        return .success(try await work())
+    } catch {
+        return .failure(error)
     }
 }
 
