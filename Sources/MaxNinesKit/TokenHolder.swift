@@ -127,13 +127,13 @@ public actor TokenHolder: AccessTokens {
         return try await task.value
     }
 
-    /// Swaps the refresh token, trying again soon if the answer doesn't come.
     /// How long after the first try a refresh may start another. The server takes a
     /// refresh token it has just replaced for a minute from when it replaced it, which is
     /// no earlier than the first try, so this leaves room for a slow network, however
     /// long each try waited for its answer.
     static let retryWindow: TimeInterval = 45
 
+    /// Swaps the refresh token, trying again soon if the answer doesn't come.
     private func refreshTrying(_ refreshToken: String) async throws -> Tokens {
         var delays = retryDelays[...]
         let started = now()
