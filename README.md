@@ -45,6 +45,9 @@ Silence 1 hour, what resolved in the last hour, and the silences running now. If
 server runs checks itself, it also shows how many of them are passing, counting only
 checks that aren't paused and have run since the server started.
 
+Opening the app again while it's running, as from Applications, opens its settings, as
+its icon can be out of sight in a crowded menu bar.
+
 ## Notifications
 
 The app can tell you when a critical alert starts, when a warning starts, and when an
