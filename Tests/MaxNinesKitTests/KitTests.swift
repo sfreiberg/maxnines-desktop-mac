@@ -423,6 +423,33 @@ let everything = NotifyWhen(critical: true, warnings: true, resolved: true)
     #expect(watch.notices(for: ended, when: everything, now: now).isEmpty)
 }
 
+@Test func onlyAnAlertWhoseStartWouldHaveBeenToldOfSaysItEnded() {
+    let noCritical = NotifyWhen(critical: false, warnings: true, resolved: true)
+    var watch = AlertWatch()
+    #expect(watch.notices(for: Alerts(open: [], resolved: []), when: noCritical, now: now).isEmpty)
+    let firing = Alerts(open: [alert(1, .critical), alert(2, .warning)], resolved: [])
+    #expect(watch.notices(for: firing, when: noCritical, now: now).map(\.title) == ["🟡 Warning: Rule 2"])
+    let ended = Alerts(
+        open: [],
+        resolved: [
+            alert(1, .critical, resolvedAt: "2026-11-06T04:43:00Z"),
+            alert(2, .warning, resolvedAt: "2026-11-06T04:43:00Z"),
+        ])
+    // The critical one never said it started, so its end would come out of nowhere.
+    #expect(watch.notices(for: ended, when: noCritical, now: now).map(\.title) == ["🟢 Resolved: Rule 2"])
+
+    // One that got worse, and was told of then, says it ended.
+    let noWarnings = NotifyWhen(critical: true, warnings: false, resolved: true)
+    var worse = AlertWatch()
+    _ = worse.notices(for: Alerts(open: [], resolved: []), when: noWarnings, now: now)
+    #expect(worse.notices(for: Alerts(open: [alert(3, .warning)], resolved: []), when: noWarnings, now: now).isEmpty)
+    #expect(
+        worse.notices(for: Alerts(open: [alert(3, .critical)], resolved: []), when: noWarnings, now: now).map(\.title)
+            == ["🔴 Now critical: Rule 3"])
+    let over = Alerts(open: [], resolved: [alert(3, .critical, resolvedAt: "2026-11-06T04:43:00Z")])
+    #expect(worse.notices(for: over, when: noWarnings, now: now).map(\.title) == ["🟢 Resolved: Rule 3"])
+}
+
 @Test func aStormBecomesOneNotification() {
     let old = Alerts(open: [], resolved: [])
     let new = Alerts(open: (1...5).map { alert($0, .critical) }, resolved: [])

@@ -13,6 +13,11 @@ public struct NotifyWhen: Equatable, Sendable {
     }
 
     public var any: Bool { critical || warnings || resolved }
+
+    /// Whether an alert this bad starting is wanted.
+    public func starts(_ severity: Severity) -> Bool {
+        severity == .critical ? critical : warnings
+    }
 }
 
 /// One notification to show.
@@ -46,8 +51,8 @@ let mostNotices = 3
 public struct AlertWatch: Sendable {
     /// What the server listed last time. Nothing until the first answer.
     private var last: Alerts?
-    /// Open alerts the person has heard of: ones that weren't silenced at some
-    /// time they were listed.
+    /// Open alerts the person has heard of: ones that, at some time they were
+    /// listed, weren't silenced and were of a kind they wanted to hear of.
     private var told: Set<Int> = []
 
     public init() {}
@@ -59,7 +64,7 @@ public struct AlertWatch: Sendable {
         defer {
             last = alerts
             let open = Set(alerts.open.map(\.id))
-            told = told.intersection(open).union(alerts.open.filter { !$0.isSilenced }.map(\.id))
+            told = told.intersection(open).union(heardOf(alerts, when: when))
         }
         guard let last else { return [] }
         return MaxNinesKit.notices(from: last, to: alerts, told: told, when: when, now: now)
@@ -67,9 +72,16 @@ public struct AlertWatch: Sendable {
 }
 
 /// What's worth a notification between `old` and `new`, when the person has
-/// heard of the alerts in `old` that weren't silenced.
+/// heard of the alerts in `old` that they could have.
 public func notices(from old: Alerts, to new: Alerts, when: NotifyWhen, now: Date = Date()) -> [Notice] {
-    notices(from: old, to: new, told: Set(old.open.filter { !$0.isSilenced }.map(\.id)), when: when, now: now)
+    notices(from: old, to: new, told: heardOf(old, when: when), when: when, now: now)
+}
+
+/// The open alerts in `alerts` the person would have heard of: not silenced, and
+/// of a kind they want to hear of starting. Only these are said to have ended, as
+/// hearing an alert has resolved means little without having heard it start.
+func heardOf(_ alerts: Alerts, when: NotifyWhen) -> Set<Int> {
+    Set(alerts.open.filter { !$0.isSilenced && when.starts($0.severity) }.map(\.id))
 }
 
 /// What's worth a notification between `old` and `new`. `told` is the open
@@ -97,7 +109,7 @@ public func notices(from old: Alerts, to new: Alerts, told: Set<Int>, when: Noti
         let unsilenced = was?.isSilenced == true
         let worse = was?.severity == .warning && alert.severity == .critical
         guard was == nil || unsilenced || worse else { continue }
-        guard alert.severity == .critical ? when.critical : when.warnings else { continue }
+        guard when.starts(alert.severity) else { continue }
         let level = alert.severity == .critical ? "Critical" : "Warning"
         worst = max(worst, alert.severity)
         started.append(

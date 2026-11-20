@@ -51,7 +51,8 @@ alert resolves, each turned on or off in its settings. All three are on to begin
 Alerts that a silence or maintenance window is holding back never send one, as
 everywhere else in MaxNines, and one still firing when its silence ends sends one then.
 Nothing that was already firing when the app started is announced, and more than three
-at once arrive as one.
+at once arrive as one. An alert only says it resolved if you'd have heard it start, so
+with critical alerts turned off, you aren't told one has ended either.
 
 Each starts with the circle MaxNines uses in Discord: red for critical, yellow for a
 warning, and green once it's resolved. A resolved one says where things stand, such as
