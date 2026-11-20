@@ -205,8 +205,14 @@ final class Store: ObservableObject {
         }
     }
 
+    /// Keeps who's signed in, which every refresh says again.
     private func signedIn(as tokens: Tokens?) {
-        account = tokens.map { Account(user: $0.user, role: $0.role) }
+        let signedIn = tokens.map { Account(user: $0.user, role: $0.role) }
+        // Mostly the same as before, which needn't be written again.
+        if let signedIn, signedIn == account {
+            return
+        }
+        account = signedIn
         let defaults = UserDefaults.standard
         defaults.set(tokens?.user, forKey: Store.userKey)
         defaults.set(tokens?.role, forKey: Store.roleKey)
