@@ -58,7 +58,9 @@ warning, and green once it's resolved. A resolved one says where things stand, s
 "web-1 is back online", and how long the problem lasted.
 
 A notification about an alert that's started has Acknowledge, which needs the
-responder role, and Open in MaxNines.
+responder role, and Open in MaxNines. Both act on the server the notification came
+from, so after signing in to another server, an older notification still opens its
+own server's page, and its Acknowledge says it can't.
 
 ## Open at login
 

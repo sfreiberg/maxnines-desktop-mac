@@ -3,10 +3,15 @@ import MaxNinesKit
 import UserNotifications
 
 /// Shows notifications when alerts start and end, and does what their buttons say.
+/// Each says which server it came from, as one can be pressed long after, when
+/// the app may be signed in to another server, where the same alert ID is some
+/// other alert.
 @MainActor
 final class Notifier: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
-    var onAcknowledge: (Int) -> Void = { _ in }
-    var onOpen: (String) -> Void = { _ in }
+    /// Told the alert to acknowledge, and the server it's on.
+    var onAcknowledge: (Int, ServerAddress?) -> Void = { _, _ in }
+    /// Told the page to open, and the server it's on.
+    var onOpen: (String, ServerAddress?) -> Void = { _, _ in }
     /// Whether macOS lets the app show notifications, once it's known.
     @Published private(set) var allowed: Bool?
 
@@ -52,14 +57,17 @@ final class Notifier: NSObject, ObservableObject, UNUserNotificationCenterDelega
         allowed = status == .notDetermined ? nil : [.authorized, .provisional].contains(status)
     }
 
-    func post(_ notice: Notice) {
+    /// Shows `notice`, which is about `server`.
+    func post(_ notice: Notice, from server: ServerAddress?) {
         guard let center else { return }
         let content = UNMutableNotificationContent()
         content.title = notice.title
         content.body = notice.body
         content.sound = .default
         content.categoryIdentifier = notice.acknowledges == nil ? Notifier.other : Notifier.firing
-        content.userInfo = ["path": notice.path, "alert": notice.acknowledges ?? 0]
+        var info: [String: Any] = ["path": notice.path, "alert": notice.acknowledges ?? 0]
+        info["server"] = server?.url.absoluteString
+        content.userInfo = info
         center.add(UNNotificationRequest(identifier: notice.id, content: content, trigger: nil))
     }
 
@@ -76,12 +84,14 @@ final class Notifier: NSObject, ObservableObject, UNUserNotificationCenterDelega
         let info = response.notification.request.content.userInfo
         let path = info["path"] as? String ?? "/alerts"
         let alert = info["alert"] as? Int ?? 0
+        // None in one from before notifications said.
+        let server = (info["server"] as? String).flatMap { try? ServerAddress($0) }
         let action = response.actionIdentifier
         await MainActor.run {
             if action == Notifier.acknowledge, alert != 0 {
-                onAcknowledge(alert)
+                onAcknowledge(alert, server)
             } else if action == Notifier.open || action == UNNotificationDefaultActionIdentifier {
-                onOpen(path)
+                onOpen(path, server)
             }
         }
     }

@@ -75,20 +75,13 @@ final class Store: ObservableObject {
         address = defaults.string(forKey: Store.addressKey) ?? ""
         let saved = defaults.integer(forKey: Store.intervalKey)
         interval = Store.intervals.contains(saved) ? saved : Store.intervals[0]
-        notifier.onAcknowledge = { [weak self] alert in
-            // Acknowledged from a notification, so a notification says if it didn't
-            // work: the menu, where it would otherwise show, may never be opened.
-            self?.act({ try await $0.acknowledge(alertID: alert) }) { problem in
-                self?.notifier.post(
-                    Notice(
-                        id: "acknowledge-failed-\(alert)-\(UUID().uuidString)",
-                        title: "Couldn't acknowledge the alert",
-                        body: problem,
-                        acknowledges: nil,
-                        path: "/alerts"))
+        notifier.onAcknowledge = { [weak self] alert, server in self?.acknowledge(alert, on: server) }
+        notifier.onOpen = { path, server in
+            // On the server the notification came from, whichever the app is signed in to now.
+            if let server {
+                NSWorkspace.shared.open(server.page(path))
             }
         }
-        notifier.onOpen = { [weak self] path in self?.open(path) }
         notifier.start(asking: notifyWhen.any)
         if let refreshToken = Keychain.refreshToken(), let server = try? ServerAddress(address) {
             if let user = defaults.string(forKey: Store.userKey), let role = defaults.string(forKey: Store.roleKey) {
@@ -295,7 +288,7 @@ final class Store: ObservableObject {
             updated = Date()
             problem = nil
             for notice in watch.notices(for: alerts, when: notifyWhen) {
-                notifier.post(notice)
+                notifier.post(notice, from: client.server)
             }
         } catch {
             // Cancelled because the settings changed, or overtaken by a later
@@ -319,6 +312,32 @@ final class Store: ObservableObject {
 
     func acknowledge(_ alert: ServerAlert) {
         act { try await $0.acknowledge(alertID: alert.id) }
+    }
+
+    /// Acknowledges alert `alert` on `server` from a notification, which says if it
+    /// didn't work: the menu, where it would otherwise show, may never be opened.
+    /// Only on the server the notification came from, as the same ID on another
+    /// is another alert.
+    private func acknowledge(_ alert: Int, on server: ServerAddress?) {
+        let failed: (String) -> Void = { [weak self] problem in
+            self?.notifier.post(
+                Notice(
+                    id: "acknowledge-failed-\(alert)-\(UUID().uuidString)",
+                    title: "Couldn't acknowledge the alert",
+                    body: problem,
+                    acknowledges: nil,
+                    path: "/alerts"),
+                from: server)
+        }
+        guard let server else {
+            failed("The notification doesn't say which server it's from")
+            return
+        }
+        guard client?.server == server else {
+            failed("It's on \(server.url.host() ?? server.url.absoluteString), which the app isn't signed in to now")
+            return
+        }
+        act({ try await $0.acknowledge(alertID: alert) }, failed: failed)
     }
 
     func silenceForAnHour(_ alert: ServerAlert) {
