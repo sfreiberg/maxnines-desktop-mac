@@ -460,10 +460,11 @@ private struct SignInPanel: View {
         URL(string: store.address)?.host() ?? store.address
     }
 
+    /// Stays on the typed address, so if signing in fails, why is said under it,
+    /// not under the saved server's button. Once signed in, the panel goes.
     private func signInTyped() {
         let address = typed.trimmingCharacters(in: .whitespaces)
         guard !address.isEmpty else { return }
-        another = false
         store.signIn(address: address)
     }
 }
