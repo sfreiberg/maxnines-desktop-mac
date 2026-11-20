@@ -21,9 +21,10 @@ struct PopoverView: View {
                     waiting
                 }
                 if let problem = store.actionProblem {
-                    notice(problem)
+                    notice(problem) { store.actionProblem = nil }
                 }
                 if let problem = store.saveProblem {
+                    // Gone by itself once the Keychain keeps the token.
                     notice(problem)
                 }
                 Divider().overlay(Theme.border)
@@ -203,14 +204,17 @@ struct PopoverView: View {
             .padding(24)
     }
 
-    private func notice(_ problem: String) -> some View {
+    /// A problem to show, with a button that does `dismiss`, if it can be dismissed.
+    private func notice(_ problem: String, dismiss: (() -> Void)? = nil) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "exclamationmark.triangle").foregroundStyle(Theme.warn)
                 .accessibilityHidden(true)
             Text(problem).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
-            Button("Dismiss") { store.actionProblem = nil }
-                .buttonStyle(QuietButtonStyle(filled: false))
+            if let dismiss {
+                Button("Dismiss", action: dismiss)
+                    .buttonStyle(QuietButtonStyle(filled: false))
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
