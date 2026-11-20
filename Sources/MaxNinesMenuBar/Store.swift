@@ -24,6 +24,9 @@ final class Store: ObservableObject {
     @Published var signInProblem: String?
     /// Set while the Keychain won't keep the sign in's newest refresh token.
     @Published private(set) var saveProblem: String?
+    /// Whether the sign in ran out, was revoked or was turned down, rather than
+    /// never having been.
+    @Published private(set) var wasSignedOut = false
 
     private var client: Client?
     private var tokens: TokenHolder?
@@ -94,11 +97,6 @@ final class Store: ObservableObject {
     }
 
     var isSetUp: Bool { client != nil }
-
-    /// Whether the sign in ran out or was revoked, rather than never having been.
-    var wasSignedOut: Bool {
-        !isSetUp && problem == ClientError.signedOut.localizedDescription
-    }
 
     var headline: String {
         if !isSetUp {
@@ -229,6 +227,7 @@ final class Store: ObservableObject {
         saveProblem = nil
         lastChecks = nil
         lastSilences = nil
+        wasSignedOut = false
         connection += 1
         client = nil
         tokens = nil
@@ -301,19 +300,39 @@ final class Store: ObservableObject {
             // answer, it says nothing about the server now.
             guard current(), !Task.isCancelled, !isCancellation(error) else { return }
             answered = ask
-            if error as? ClientError == .signedOut {
-                signedOut()
+            if let ended = endedSignIn(error) {
+                signedOut(ended)
             } else {
                 problem = error.localizedDescription
             }
         }
     }
 
-    /// The sign in ran out or was revoked: stop asking, and say to sign in again.
-    private func signedOut() {
+    /// Whether `error` says the sign in can't be used any more: it ran out or was
+    /// revoked, or the server turned down an access token it had only just given.
+    private func endedSignIn(_ error: Error) -> ClientError? {
+        switch error as? ClientError {
+        case .signedOut: .signedOut
+        case .notSignedIn: .notSignedIn
+        default: nil
+        }
+    }
+
+    /// The sign in can't be used any more: stop asking, and say to sign in again.
+    private func signedOut(_ why: ClientError) {
+        let tokens = self.tokens
         disconnect()
         signedIn(as: nil)
-        problem = ClientError.signedOut.localizedDescription
+        wasSignedOut = true
+        if why == .notSignedIn {
+            problem = "The server didn't accept the sign in, so the app signed out: sign in again"
+            // The server still takes its refresh token, which is no use to the app
+            // now, so it's signed out there too, and forgotten here, rather than
+            // tried again at the next start.
+            Task { try? await tokens?.signOut() }
+        } else {
+            problem = why.localizedDescription
+        }
     }
 
     func acknowledge(_ alert: ServerAlert) {
@@ -365,8 +384,8 @@ final class Store: ObservableObject {
             } catch {
                 actionProblem = error.localizedDescription
                 failed?(error.localizedDescription)
-                if error as? ClientError == .signedOut, connection == asked {
-                    signedOut()
+                if let ended = endedSignIn(error), connection == asked {
+                    signedOut(ended)
                     return
                 }
             }

@@ -29,7 +29,8 @@ The app stays signed in for up to 90 days after it was last used, and keeps what
 needs for that in your Keychain. To sign it out, choose **Sign out** in its settings.
 In MaxNines, **Settings**, then **Signed-in apps**, lists it as MaxNines Desktop for
 Mac, with the Mac's name, and you can revoke it there too. If it's revoked or runs
-out, the menu says so, with a button to sign in again. To use another server, sign
+out, or the server stops accepting it, the menu says so, with a button to sign in
+again. To use another server, sign
 out in its settings first.
 
 ## What it shows

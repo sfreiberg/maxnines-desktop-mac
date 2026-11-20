@@ -66,7 +66,7 @@ struct SettingsView: View {
                 .autocorrectionDisabled()
                 .disabled(store.signingIn)
             if store.wasSignedOut {
-                Text("The app's sign in ran out or was revoked. Sign in again to see alerts.")
+                Text("The app's sign in ran out, was revoked, or wasn't accepted. Sign in again to see alerts.")
                     .font(.callout)
                     .foregroundStyle(.orange)
             }
