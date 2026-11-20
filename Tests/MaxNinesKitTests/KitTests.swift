@@ -153,6 +153,10 @@ let now = Client.moment("2026-11-06T04:45:00Z")!
     #expect(server.url.absoluteString == "http://192.168.0.155:9000")
     #expect(server.page("/hosts").absoluteString == "http://192.168.0.155:9000/hosts")
     #expect(server.isInTheClear)
+    // As a notification keeps it, and reads it back to check it's the same server.
+    #expect(try ServerAddress(server.url.absoluteString) == server)
+    #expect(try ServerAddress("https://monitor.example.com/alerts/7") == ServerAddress("https://monitor.example.com"))
+    #expect(try ServerAddress("https://monitor.example.com:8443") != ServerAddress("https://monitor.example.com"))
 
     let client = Client(server: server, tokens: FixedToken("mxa_1"))
     let request = client.request("POST", "alerts/7/acknowledge", token: "mxa_1")
