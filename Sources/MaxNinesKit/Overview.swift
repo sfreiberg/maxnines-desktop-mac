@@ -71,7 +71,9 @@ public struct Overview: Equatable, Sendable {
 /// What to show of something extra the server is asked for, such as its checks:
 /// what it gave, nothing when it can't or won't give it, and what it gave before
 /// when asking failed for some other reason, so a moment's trouble doesn't make
-/// it vanish.
+/// it vanish. A page that isn't an answer at all, such as a proxy's while the
+/// server restarts, is a moment's trouble too: a server too old to list it says
+/// there's no such thing.
 public func extra<Value>(_ asked: Result<Value, Error>, before: Value?) -> Value? {
     switch asked {
     case .success(let value):
@@ -79,7 +81,7 @@ public func extra<Value>(_ asked: Result<Value, Error>, before: Value?) -> Value
     case .failure(let error):
         switch error as? ClientError {
         // Too old to list it, or not letting this sign in see it.
-        case .status(404), .notAllowed, .notMaxNines: return nil
+        case .status(404), .notAllowed: return nil
         default: return before
         }
     }

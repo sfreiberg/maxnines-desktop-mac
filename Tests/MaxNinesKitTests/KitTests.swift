@@ -282,11 +282,13 @@ let silencesJSON = """
     let before = [3, 4]
     #expect(extra(.success([5]), before: before) == [5])
     // Asking failed for the moment, so what was there still is, as far as is known.
-    for passing: Error in [URLError(.timedOut), URLError(.notConnectedToInternet), ClientError.status(502)] {
+    for passing: Error in [
+        URLError(.timedOut), URLError(.notConnectedToInternet), ClientError.status(502), ClientError.notMaxNines,
+    ] {
         #expect(extra(Result<[Int], Error>.failure(passing), before: before) == before)
     }
     // A server too old to list them, or a sign in not allowed to see them.
-    for lasting: Error in [ClientError.status(404), ClientError.notAllowed(nil), ClientError.notMaxNines] {
+    for lasting: Error in [ClientError.status(404), ClientError.notAllowed(nil)] {
         #expect(extra(Result<[Int], Error>.failure(lasting), before: before) == nil)
     }
 
