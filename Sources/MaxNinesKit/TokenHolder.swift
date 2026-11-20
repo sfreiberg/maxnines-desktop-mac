@@ -18,14 +18,22 @@ public actor TokenHolder: AccessTokens {
     private var unsaved: Tokens?
     private let now: @Sendable () -> Date
     private var refreshToken: String?
-    private var access: (token: String, expires: Date)?
+    /// The access token, when it runs out, and how long before then a new one
+    /// is fetched.
+    private var access: (token: String, expires: Date, early: TimeInterval)?
     /// The refresh running now, if one is.
     private var refreshing: Task<String, Error>?
     /// Set once signing out starts, after which nothing refreshes.
     private var signingOut = false
 
-    /// How long before the access token runs out that a new one is fetched.
+    /// How long before the access token runs out that a new one is fetched, or
+    /// half of how long it works for when that's shorter, so it's used for a
+    /// while however short its life.
     static let early: TimeInterval = 60
+
+    static func early(lasting: Int) -> TimeInterval {
+        min(early, TimeInterval(lasting) / 2)
+    }
     /// How long to wait before each new try when a refresh fails for any reason
     /// but being signed out. They all fall within the minute the server still
     /// takes a refresh token it has just replaced, so an answer lost on the way
@@ -43,7 +51,7 @@ public actor TokenHolder: AccessTokens {
         self.save = save
         self.now = now
         self.refreshToken = tokens.refreshToken
-        self.access = (tokens.accessToken, now().addingTimeInterval(TimeInterval(tokens.expiresIn)))
+        self.access = TokenHolder.access(tokens, now: now())
         self.unsaved = save(tokens) ? nil : tokens
     }
 
@@ -112,8 +120,12 @@ public actor TokenHolder: AccessTokens {
 
     /// The access token, if it isn't about to run out.
     private func current() -> String? {
-        guard let access, access.expires.timeIntervalSince(now()) > TokenHolder.early else { return nil }
+        guard let access, access.expires.timeIntervalSince(now()) > access.early else { return nil }
         return access.token
+    }
+
+    private static func access(_ tokens: Tokens, now: Date) -> (token: String, expires: Date, early: TimeInterval) {
+        (tokens.accessToken, now.addingTimeInterval(TimeInterval(tokens.expiresIn)), early(lasting: tokens.expiresIn))
     }
 
     /// Joins the refresh running now, or starts one.
@@ -167,7 +179,7 @@ public actor TokenHolder: AccessTokens {
         // Kept before it's used, so a crash now can't leave the old one saved.
         unsaved = save(tokens) ? nil : tokens
         self.refreshToken = tokens.refreshToken
-        access = (tokens.accessToken, now().addingTimeInterval(TimeInterval(tokens.expiresIn)))
+        access = TokenHolder.access(tokens, now: now())
         return tokens.accessToken
     }
 }

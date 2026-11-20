@@ -777,6 +777,22 @@ func holder(
     #expect(saved.value.map { $0?.refreshToken } == ["mxr_1", "mxr_2"])
 }
 
+@Test func anAccessTokenThatWorksForAMinuteOrLessIsUsedForHalfOfIt() async throws {
+    let refreshes = Box(0)
+    let server = FakeServer { _ in
+        refreshes.value += 1
+        return (200, tokensJSON("mxa_\(refreshes.value)", "mxr_\(refreshes.value)", expiresIn: 60))
+    }
+    let clock = Box(Date(timeIntervalSince1970: 1_000_000))
+    let tokens = holder(server, saved: Box([]), clock: clock)
+    #expect(try await tokens.accessToken() == "mxa_1")
+    clock.value += 29
+    #expect(try await tokens.accessToken() == "mxa_1")
+    clock.value += 2
+    #expect(try await tokens.accessToken() == "mxa_2")
+    #expect(refreshes.value == 2)
+}
+
 @Test func justSignedInTheTokensAreUsedUntilTheyRunOut() async throws {
     let server = FakeServer { _ in (200, tokensJSON("mxa_2", "mxr_2")) }
     let clock = Box(Date(timeIntervalSince1970: 1_000_000))
