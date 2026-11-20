@@ -17,7 +17,8 @@ public struct NotifyWhen: Equatable, Sendable {
 
 /// One notification to show.
 public struct Notice: Equatable, Sendable {
-    /// Unique to the change, so the same one is never shown twice.
+    /// Unique to the change, so a later one never takes the place of an earlier
+    /// one's notification, as a notification given the same ID does.
     public let id: String
     public let title: String
     public let body: String
@@ -83,6 +84,10 @@ public func notices(from old: Alerts, to new: Alerts, told: Set<Int>, when: Noti
     let before = Dictionary(old.open.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
     let still = Set(new.open.map(\.id))
 
+    // An alert can start, or get worse, more than once: it can be silenced and
+    // then not, or go from warning to critical and back again. So when is part of
+    // the ID.
+    let moment = Int64((now.timeIntervalSince1970 * 1000).rounded())
     var started: [Notice] = []
     var worst = Severity.warning
     for alert in new.open where !alert.isSilenced {
@@ -97,7 +102,7 @@ public func notices(from old: Alerts, to new: Alerts, told: Set<Int>, when: Noti
         worst = max(worst, alert.severity)
         started.append(
             Notice(
-                id: "alert-\(alert.id)-\(alert.severity.rawValue)",
+                id: "alert-\(alert.id)-\(alert.severity.rawValue)-\(moment)",
                 title: "\(mark(alert.severity)) \(was == nil || unsilenced ? level : "Now critical"): \(alert.ruleName)",
                 body: alert.summary,
                 acknowledges: alert.isAcknowledged ? nil : alert.id,

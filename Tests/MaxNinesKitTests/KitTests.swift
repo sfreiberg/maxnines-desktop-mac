@@ -363,6 +363,22 @@ let everything = NotifyWhen(critical: true, warnings: true, resolved: true)
     #expect(notices(from: old, to: old, when: everything, now: now).isEmpty)
 }
 
+@Test func anAlertThatStartsAgainGetsANotificationOfItsOwn() {
+    var watch = AlertWatch()
+    let warning = Alerts(open: [alert(1, .warning)], resolved: [])
+    let critical = Alerts(open: [alert(1, .critical)], resolved: [])
+    let silenced = Alerts(open: [alert(1, .critical, silenced: true)], resolved: [])
+    #expect(watch.notices(for: warning, when: everything, now: now).isEmpty)
+    var ids: [String] = []
+    for (step, alerts) in [critical, warning, critical, silenced, critical].enumerated() {
+        ids += watch.notices(for: alerts, when: everything, now: now.addingTimeInterval(Double(step) * 15)).map(\.id)
+    }
+    // Worse twice, and its silence ended, each with an ID that doesn't replace the
+    // notification before.
+    #expect(ids.count == 3)
+    #expect(Set(ids).count == 3)
+}
+
 @Test func resolvedAlertsSayWhereThingsStandAndHowLongTheyLasted() {
     let old = Alerts(
         open: [alert(1, .critical), alert(2, .warning), alert(3, .critical, silenced: true), alert(4, .warning)],
