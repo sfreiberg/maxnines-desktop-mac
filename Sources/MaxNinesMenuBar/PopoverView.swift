@@ -426,7 +426,11 @@ private struct SignInPanel: View {
                             .disabled(typed.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
                     if another {
-                        Button("Back to \(saved)") { another = false }
+                        Button("Back to \(saved)") {
+                            // It was about the server typed.
+                            store.signInProblem = nil
+                            another = false
+                        }
                             .buttonStyle(.plain)
                             .font(.system(size: 12))
                             .foregroundStyle(Theme.accentInk)
@@ -436,6 +440,8 @@ private struct SignInPanel: View {
                         .buttonStyle(PrimaryButtonStyle())
                     Button("Use another server") {
                         typed = ""
+                        // It was about the saved server.
+                        store.signInProblem = nil
                         another = true
                     }
                     .buttonStyle(.plain)
