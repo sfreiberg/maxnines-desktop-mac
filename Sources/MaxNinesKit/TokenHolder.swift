@@ -187,14 +187,14 @@ public actor TokenHolder: AccessTokens {
 /// Where the app keeps its sign in's refresh token, which only the newest sign in
 /// may change. One signed out of or replaced may still be finishing a refresh or
 /// a sign out, and mustn't overwrite or forget the token of the one after it.
-public final class TokenSlot: @unchecked Sendable {
+public final class TokenSlot<Kept>: @unchecked Sendable {
     /// Keeps a refresh token, or forgets it when given nil, and says whether that
     /// worked.
-    private let write: @Sendable (String?) -> Bool
+    private let write: @Sendable (Kept?) -> Bool
     private let lock = NSLock()
     private var newest = 0
 
-    public init(write: @escaping @Sendable (String?) -> Bool) {
+    public init(write: @escaping @Sendable (Kept?) -> Bool) {
         self.write = write
     }
 
@@ -209,7 +209,7 @@ public final class TokenSlot: @unchecked Sendable {
 
     /// Keeps `token`, or forgets it when nil, if `claim` is still the newest.
     /// Returns false only when it should have and couldn't.
-    public func save(_ token: String?, for claim: Int) -> Bool {
+    public func save(_ token: Kept?, for claim: Int) -> Bool {
         // Held while writing, so a claim can't come between the check and the write.
         lock.withLock { claim == newest ? write(token) : true }
     }

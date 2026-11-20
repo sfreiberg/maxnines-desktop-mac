@@ -31,7 +31,7 @@ final class Store: ObservableObject {
     private var client: Client?
     private var tokens: TokenHolder?
     /// Where the refresh token is kept, which only the newest sign in can change.
-    private let slot = TokenSlot(write: { Keychain.setRefreshToken($0) })
+    private let slot = TokenSlot<KeptSignIn>(write: { Keychain.keep($0) })
     private var signingInTask: Task<Void, Never>?
     /// Counts each sign in started, so one that's been cancelled or started
     /// again doesn't say it's finished.
@@ -86,12 +86,18 @@ final class Store: ObservableObject {
             }
         }
         notifier.start(asking: notifyWhen.any)
-        if let refreshToken = Keychain.refreshToken(), let server = try? ServerAddress(address) {
+        // The server kept with the token is the one it's for, even if the settings
+        // name another, as when the app stopped between keeping one and the other.
+        if let kept = Keychain.signIn(), let server = try? ServerAddress(kept.address ?? address) {
+            if let keptAddress = kept.address, keptAddress != address {
+                address = keptAddress
+                defaults.set(address, forKey: Store.addressKey)
+            }
             if let user = defaults.string(forKey: Store.userKey), let role = defaults.string(forKey: Store.roleKey) {
                 account = Account(user: user, role: role)
             }
-            connect(server) { endpoints, save in
-                TokenHolder(refreshToken: refreshToken, endpoints: endpoints, save: save)
+            connect(server, address: address) { endpoints, save in
+                TokenHolder(refreshToken: kept.refreshToken, endpoints: endpoints, save: save)
             }
         }
     }
@@ -154,12 +160,15 @@ final class Store: ObservableObject {
                     return
                 }
                 Keychain.forgetAPIKey()
-                address = typed.trimmingCharacters(in: .whitespacesAndNewlines)
-                UserDefaults.standard.set(address, forKey: Store.addressKey)
-                signedIn(as: tokens)
-                connect(server) { endpoints, save in
+                let address = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+                // Keeps the tokens with the server's address before the settings
+                // name it.
+                connect(server, address: address) { endpoints, save in
                     TokenHolder(tokens: tokens, endpoints: endpoints, save: save)
                 }
+                self.address = address
+                UserDefaults.standard.set(address, forKey: Store.addressKey)
+                signedIn(as: tokens)
             } catch {
                 guard !isCancellation(error) else { return }
                 signInProblem = error.localizedDescription
@@ -233,9 +242,9 @@ final class Store: ObservableObject {
         tokens = nil
     }
 
-    /// Starts asking `server`, with tokens from `holder`.
+    /// Starts asking `server`, which was typed as `address`, with tokens from `holder`.
     private func connect(
-        _ server: ServerAddress,
+        _ server: ServerAddress, address: String,
         holder: (SignInEndpoints, @escaping @Sendable (Tokens?) -> Bool) -> TokenHolder
     ) {
         disconnect()
@@ -244,7 +253,7 @@ final class Store: ObservableObject {
         // Each refresh token is kept as soon as it comes, and who's signed in kept
         // up to date, unless this sign in has since ended.
         let save: @Sendable (Tokens?) -> Bool = { [weak self, slot] tokens in
-            let kept = slot.save(tokens?.refreshToken, for: claim)
+            let kept = slot.save(tokens.map { KeptSignIn(address: address, refreshToken: $0.refreshToken) }, for: claim)
             Task { @MainActor in
                 guard let self, self.connection == connected else { return }
                 self.signedIn(as: tokens)

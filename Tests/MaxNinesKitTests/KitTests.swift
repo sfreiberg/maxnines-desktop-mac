@@ -888,6 +888,14 @@ func holder(
     #expect(kept.value == "mxr_2")
 }
 
+@Test func theKeychainKeepsTheServerWithItsToken() {
+    let kept = KeptSignIn(address: "https://monitor.example.com", refreshToken: "mxr_1")
+    #expect(KeptSignIn(kept.data) == kept)
+    // As earlier versions kept it: the token alone, for the server in the settings.
+    #expect(KeptSignIn(Data("mxr_0".utf8)) == KeptSignIn(address: nil, refreshToken: "mxr_0"))
+    #expect(KeptSignIn(Data()) == nil)
+}
+
 @Test func aRefreshTokenThatNoLongerWorksSignsOut() async throws {
     let server = FakeServer { _ in
         (400, #"{"error": "invalid_grant", "error_description": "That refresh token doesn't work any more"}"#)
