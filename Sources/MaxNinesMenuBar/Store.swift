@@ -391,11 +391,15 @@ final class Store: ObservableObject {
         Task {
             do {
                 try await action(client)
-                actionProblem = nil
+                if connection == asked {
+                    actionProblem = nil
+                }
             } catch {
-                actionProblem = error.localizedDescription
                 failed?(error.localizedDescription)
-                if let ended = endedSignIn(error), connection == asked {
+                // Once signed out or in again, it's about a sign in that's over.
+                guard connection == asked else { return }
+                actionProblem = error.localizedDescription
+                if let ended = endedSignIn(error) {
                     signedOut(ended)
                     return
                 }
