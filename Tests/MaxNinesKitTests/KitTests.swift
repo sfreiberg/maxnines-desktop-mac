@@ -450,6 +450,15 @@ let everything = NotifyWhen(critical: true, warnings: true, resolved: true)
     #expect(worse.notices(for: over, when: noWarnings, now: now).map(\.title) == ["🟢 Resolved: Rule 3"])
 }
 
+@Test func moreAlertsEndingAtOnceThanTheServerListsAreAllSaidToHaveEnded() {
+    let old = Alerts(open: (1...250).map { alert($0, .critical) }, resolved: [])
+    // The server lists the newest 200 that ended, so 50 are left out.
+    let new = Alerts(open: [], resolved: (51...250).map { alert($0, .critical, resolvedAt: "2026-11-06T04:43:00Z") })
+    #expect(notices(from: old, to: new, when: everything, now: now).map(\.title) == ["🟢 250 alerts resolved"])
+    let one = notices(from: Alerts(open: [alert(1, .critical)], resolved: []), to: new, when: everything, now: now)
+    #expect(one.map(\.body) == ["Was: Alert 1"])
+}
+
 @Test func aStormBecomesOneNotification() {
     let old = Alerts(open: [], resolved: [])
     let new = Alerts(open: (1...5).map { alert($0, .critical) }, resolved: [])
