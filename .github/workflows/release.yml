@@ -7,19 +7,14 @@
 # VERSION. Each release is titled "MaxNines Desktop for Mac 1.2.3", with notes
 # from the commits, its files, and their SHA256SUMS.
 #
-# A pull request that changes the packaging runs everything but publishing, so it's
-# known to work before a tag needs it. So does starting it by hand from Actions.
+# Only a tag runs this, as it's the slow part: CI runs the tests on every pull
+# request. Starting it by hand from Actions runs everything but publishing, to try
+# a packaging change before a tag needs it.
 name: Release
 
 on:
   push:
     tags: ["v*"]
-  pull_request:
-    paths:
-      - .github/workflows/release.yml
-      - scripts/bundle.sh
-      - scripts/package.sh
-      - VERSION
   workflow_dispatch:
 
 permissions:

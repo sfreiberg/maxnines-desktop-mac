@@ -1,12 +1,22 @@
+# Tests on every pull request and on main. A commit on a branch with a pull request
+# runs once, for the pull request, and a newer push cancels the run for the one
+# before it. Bundling and checking the disk image wait for a version tag
+# (release.yml).
 name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
-    name: Tests and build
+    name: Tests
     # macOS runners cost private repos ten times what Linux ones do, so nothing runs
     # until the repo is public, when they're free. Skipped jobs use no minutes.
     if: ${{ !github.event.repository.private }}
@@ -14,4 +24,3 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: scripts/test.sh
-      - run: scripts/bundle.sh
