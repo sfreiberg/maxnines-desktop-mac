@@ -234,6 +234,8 @@ final class Store: ObservableObject {
         // Another server's alerts aren't news about this one's.
         watch = AlertWatch()
         saveProblem = nil
+        // About an alert on a sign in that's over.
+        actionProblem = nil
         lastChecks = nil
         lastSilences = nil
         wasSignedOut = false
