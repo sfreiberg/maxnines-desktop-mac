@@ -153,9 +153,11 @@ struct PopoverView: View {
                     }
                 }
             }
-            // A storm of alerts scrolls rather than running off the screen.
+            // A storm of alerts scrolls rather than running off the screen. Fixed
+            // at the list's height up to that, as the window takes its height from
+            // what it shows only when that has a single height.
             .frame(maxHeight: 360)
-            .fixedSize(horizontal: false, vertical: overview.firing.count <= 4)
+            .fixedSize(horizontal: false, vertical: true)
         }
         if !overview.resolved.isEmpty {
             Divider().overlay(Theme.border)
